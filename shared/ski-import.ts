@@ -1,3 +1,4 @@
+import { inside, geometryIssues, type ResortTarget } from "./ski-quality.js";
 import {
   lineLength,
   project,
@@ -15,6 +16,7 @@ type Element = {
   lon?: number;
   tags?: Record<string, string>;
   geometry?: { lat: number; lon: number }[];
+  members?: { type: string; ref: number; role?: string }[];
   bounds?: { minlat: number; minlon: number; maxlat: number; maxlon: number };
 };
 const coordinate = (p: { lat?: number; lon?: number }): Coord | null =>
@@ -31,11 +33,12 @@ const clean = (s: string | undefined) =>
 export function normalizeOverpass(
   input: unknown,
   updatedAt = new Date().toISOString(),
+  options: { target?: ResortTarget } = {},
 ) {
   if (!input || !Array.isArray((input as any).elements))
     throw Error("Ожидается Overpass JSON с elements");
   const rawElements = (input as { elements: Element[] }).elements;
-  const elements = rawElements.filter(
+  let elements = rawElements.filter(
     (e) =>
       e &&
       ["node", "way", "relation"].includes(e.type) &&
@@ -45,10 +48,71 @@ export function normalizeOverpass(
   if (rawElements.length !== elements.length)
     throw Error("Некорректный OSM ID/type");
   if (elements.length > 200000) throw Error("Слишком много объектов");
+  const parents = new Map<number, Element[]>();
+  for (const e of elements)
+    if (
+      e.type === "relation" &&
+      e.tags?.route === "piste" &&
+      e.tags?.["piste:type"] === "downhill"
+    )
+      for (const m of e.members ?? []) {
+        if (m.type === "way") {
+          const a = parents.get(m.ref) ?? [];
+          a.push(e);
+          parents.set(m.ref, a);
+        }
+      }
+  elements = elements.map((e) => {
+    const ps = e.type === "way" ? parents.get(e.id) : undefined;
+    if (!ps?.length) return e;
+    const tags = { ...e.tags };
+    tags["piste:type"] ??= "downhill";
+    for (const key of ["piste:difficulty", "piste:name"]) {
+      const values = [
+        ...new Set(
+          ps
+            .map(
+              (p) =>
+                p.tags?.[key] ||
+                (key === "piste:name" ? p.tags?.name : undefined),
+            )
+            .filter(Boolean),
+        ),
+      ];
+      if (!tags[key] && values.length === 1) tags[key] = values[0]!;
+    }
+    return { ...e, tags };
+  });
   const bundles: SkiBundle[] = [];
+  const target = options.target;
+  if (target) {
+    const [w, s, e, n] = target.bbox;
+    bundles.push({
+      resort: {
+        id: "ru-" + target.id,
+        name: target.name,
+        aliases: target.aliases,
+        region: target.region,
+        center: [(w + e) / 2, (s + n) / 2],
+        bbox: target.bbox,
+        source: `https://www.openstreetmap.org/?bbox=${target.bbox.join(",")}`,
+        updatedAt,
+        pistes: 0,
+        lifts: 0,
+        classified: 0,
+        completeness: "partial",
+        association: "search-window",
+      },
+      lines: [],
+      attribution: "© OpenStreetMap contributors · ODbL 1.0",
+      updatedAt,
+    });
+  }
+
   for (const e of elements) {
     const t = e.tags ?? {};
     if (
+      target ||
       t.landuse !== "winter_sports" ||
       /^(disused|abandoned|proposed|construction)$/.test(t.status ?? "")
     )
@@ -102,6 +166,7 @@ export function normalizeOverpass(
       lifts: 0,
       classified: 0,
       completeness: "partial",
+      association: "proximity",
     };
     bundles.push({
       resort,
@@ -110,6 +175,7 @@ export function normalizeOverpass(
       updatedAt,
     });
   }
+  const rejections: { source: string; reasons: string[] }[] = [];
   let unassigned = 0;
   const stations = elements.filter(
     (e) => e.tags?.aerialway === "station" && coordinate(e),
@@ -124,7 +190,40 @@ export function normalizeOverpass(
     const cs = (e.geometry ?? [])
       .map(coordinate)
       .filter((x): x is Coord => !!x);
-    if (cs.length < 2 || cs.length > 30000) continue;
+    if (cs.length !== (e.geometry ?? []).length || geometryIssues(cs).length) {
+      rejections.push({
+        source: `${e.type}/${e.id}`,
+        reasons: ["invalid-geometry-or-unassigned"],
+      });
+      unassigned++;
+      continue;
+    }
+    if (
+      target &&
+      cs.filter((c) => inside(c, target.bbox)).length / cs.length < 0.8
+    ) {
+      rejections.push({
+        source: `${e.type}/${e.id}`,
+        reasons: ["invalid-geometry-or-unassigned"],
+      });
+      unassigned++;
+      continue;
+    }
+    const claimed = t["piste:resort"];
+    if (
+      target &&
+      claimed &&
+      ![target.name, ...target.aliases].some((n) =>
+        claimed.toLowerCase().includes(n.toLowerCase()),
+      )
+    ) {
+      rejections.push({
+        source: `${e.type}/${e.id}`,
+        reasons: ["invalid-geometry-or-unassigned"],
+      });
+      unassigned++;
+      continue;
+    }
     const mid = cs[Math.floor(cs.length / 2)];
     const candidates = bundles
       .map((b) => {
@@ -141,6 +240,10 @@ export function normalizeOverpass(
       .filter((c) => c.inside || c.dist < 4000)
       .sort((a, b) => Number(b.inside) - Number(a.inside) || a.dist - b.dist);
     if (!candidates[0]) {
+      rejections.push({
+        source: `${e.type}/${e.id}`,
+        reasons: ["invalid-geometry-or-unassigned"],
+      });
       unassigned++;
       continue;
     }
@@ -187,16 +290,29 @@ export function normalizeOverpass(
       b.resort.pistes++;
       if (
         [
+          "novice",
           "beginner",
           "easy",
           "intermediate",
           "advanced",
           "expert",
           "freeride",
+          "extreme",
         ].includes(line.difficulty ?? "")
       )
         b.resort.classified++;
     } else b.resort.lifts++;
+  }
+  if (target && bundles[0].lines.length) {
+    const cs = bundles[0].lines.flatMap((l) => l.coordinates);
+    const b: [number, number, number, number] = [
+      Math.min(...cs.map((c) => c[0])),
+      Math.min(...cs.map((c) => c[1])),
+      Math.max(...cs.map((c) => c[0])),
+      Math.max(...cs.map((c) => c[1])),
+    ];
+    bundles[0].resort.bbox = b;
+    bundles[0].resort.center = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
   }
   const catalog: SkiCatalog = {
     version: 1,
@@ -208,5 +324,5 @@ export function normalizeOverpass(
     notice:
       "Общественная разметка OSM; полнота и статус открытия не подтверждены. Привязка линий к курортам по границам/близости требует проверки.",
   };
-  return { catalog, bundles };
+  return { catalog, bundles, rejections };
 }

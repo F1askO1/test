@@ -1,3 +1,11 @@
+# Доработка загрузки курортов после 269dec0
+
+Ветка fix/resort-data-pipeline: check/build успешны; 77 автоматических тестов прошли; Chromium 14 passed, 1 skipped (именно настоящая карта Домбая). Живой запрос источника остановлен proxy CONNECT 403. Реальные геоданные не получены, скриншоты настоящего Домбая не созданы, цель приёмки не объявлена выполненной. Новый код resume/cache/пакетов и статус источников: [REAL_RESORT_IMPORT_RU.md](REAL_RESORT_IMPORT_RU.md).
+
+Следующие результаты относятся к предыдущим версиям.
+
+---
+
 # Ski Map / GPS Engine 2.0 — текущая проверка
 
 `npm run check`, `npm run build`: успешно. `npm test`: **63 passed**. Chromium Playwright: **14 passed**. Подробности, честные ограничения и синтетические скриншоты — [SKI_MAP_TEST_REPORT_RU.md](SKI_MAP_TEST_REPORT_RU.md).

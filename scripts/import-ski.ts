@@ -1,114 +1,74 @@
-import {
-  readFileSync,
-  writeFileSync,
-  mkdirSync,
-  renameSync,
-  existsSync,
-  statSync,
-  openSync,
-  closeSync,
-  unlinkSync,
-} from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { normalizeOverpass } from "../shared/ski-import.js";
-const file = process.argv[2];
-if (!file)
-  throw Error(
-    "Укажите Overpass JSON: npm run maps:import -- path/to/russia.json. Сетевая загрузка: npm run maps:fetch",
-  );
+import {
+  normalizeOpenSkiData,
+  osmXmlToOverpass,
+} from "../shared/ski-alternatives.js";
+import { installBundles, digest } from "../shared/ski-store.js";
+import type { ResortTarget } from "../shared/ski-quality.js";
+const args = process.argv.slice(2),
+  file = args[0],
+  value = (key: string) => {
+    const i = args.indexOf(key);
+    return i < 0 ? undefined : args[i + 1];
+  };
+if (!file || file.startsWith("--"))
+  throw Error("Укажите файл .json/.osm и при необходимости --resort dombay.");
 if (statSync(file).size > 64 * 1024 * 1024)
-  throw Error("Лимит входного файла 64 MiB");
-const raw = JSON.parse(readFileSync(file, "utf8"));
+  throw Error(
+    "Лимит входного файла 64 MiB; сначала выделите курорт из регионального PBF.",
+  );
+const targetId = value("--resort"),
+  targets = JSON.parse(
+    readFileSync(
+      value("--manifest") ||
+        fileURLToPath(new URL("../map-sources/resorts.json", import.meta.url)),
+      "utf8",
+    ),
+  ) as ResortTarget[];
+const target = targetId ? targets.find((t) => t.id === targetId) : undefined;
+if (targetId && !target) throw Error("Курорт не найден в manifest");
+const bytes = readFileSync(file),
+  text = bytes.toString("utf8"),
+  raw = text.trimStart().startsWith("<")
+    ? osmXmlToOverpass(text)
+    : JSON.parse(text);
 if (raw.remark)
   throw Error("Overpass вернул remark/ошибку. Каталог не заменён.");
-const { catalog, bundles } = normalizeOverpass(raw);
+const updatedAt = new Date().toISOString();
+let bundles;
+let rejections: unknown[] = [];
+if (raw.type === "FeatureCollection") {
+  if (!target) throw Error("Для OpenSkiData укажите --resort");
+  bundles = [normalizeOpenSkiData(raw, target, updatedAt)];
+} else {
+  const normalized = normalizeOverpass(raw, updatedAt, { target });
+  bundles = normalized.bundles;
+  rejections = normalized.rejections;
+}
 if (!bundles.length)
-  throw Error("Нет курортов с landuse=winter_sports. Старый каталог сохранён.");
-const root = resolve("map-data");
-mkdirSync(root, { recursive: true });
-// Versioned filenames: catalogue changes atomically only when all bundles are ready.
-const lock = resolve(root, ".import.lock");
-let fd: number;
-try {
-  fd = openSync(lock, "wx");
-} catch {
   throw Error(
-    "Уже выполняется импорт; проверьте .import.lock после аварийного завершения.",
+    "Нет привязанных объектов курорта. Если отсутствует winter_sports, укажите --resort dombay (или другой manifest target).",
   );
-}
-try {
-  const stamp = Date.now().toString(36);
-  const files: Record<string, string> = {};
-  for (const bundle of bundles) {
-    const name = `${bundle.resort.id}-${stamp}.json`;
-    writeFileSync(resolve(root, name), JSON.stringify(bundle));
-    files[bundle.resort.id] = name;
-  }
-  const tmp = resolve(root, "catalog.tmp");
-  if (existsSync(resolve(root, "catalog.json")))
-    writeFileSync(
-      resolve(root, "catalog.previous.json"),
-      readFileSync(resolve(root, "catalog.json")),
-    );
-  writeFileSync(tmp, JSON.stringify({ ...catalog, files }));
-  renameSync(tmp, resolve(root, "catalog.json"));
-  const controls = [
-    "Роза Хутор",
-    "Красная Поляна",
-    "Газпром",
-    "Архыз",
-    "Домбай",
-    "Эльбрус",
-    "Шерегеш",
-    "Манжерок",
-    "Большой Вудъявр",
-    "Абзаково",
-    "Банное",
-    "Белокуриха",
-    "Солнечная долина",
-    "Сорочаны",
-    "Волен",
-    "Степаново",
-    "Игора",
-  ];
-  writeFileSync(
-    resolve(root, "coverage.json"),
-    JSON.stringify(
-      {
-        updatedAt: catalog.updatedAt,
-        counts: {
-          resorts: catalog.resorts.length,
-          pistes: catalog.resorts.reduce((s, r) => s + r.pistes, 0),
-          lifts: catalog.resorts.reduce((s, r) => s + r.lifts, 0),
-          classified: catalog.resorts.reduce((s, r) => s + r.classified, 0),
-          unassigned: catalog.unassigned,
-        },
-        controls: controls.map((name) => ({
-          name,
-          matches: catalog.resorts
-            .filter((r) =>
-              [r.name, ...r.aliases].some((n) =>
-                n.toLowerCase().includes(name.toLowerCase()),
-              ),
-            )
-            .map((r) => ({ id: r.id, pistes: r.pistes, lifts: r.lifts })),
-        })),
-        note: "Контроль названий, не проверка полноты и не список всех курортов.",
-      },
-      null,
-      2,
-    ),
-  );
-  console.log(
-    JSON.stringify({
-      resorts: catalog.resorts.length,
-      pistes: catalog.resorts.reduce((s, r) => s + r.pistes, 0),
-      lifts: catalog.resorts.reduce((s, r) => s + r.lifts, 0),
-      classified: catalog.resorts.reduce((s, r) => s + r.classified, 0),
-      unassigned: catalog.unassigned,
-    }),
-  );
-} finally {
-  closeSync(fd);
-  unlinkSync(lock);
-}
+const provenance = {
+  inputSha256: digest(bytes),
+  rejections,
+  format:
+    raw.type === "FeatureCollection"
+      ? "OpenSkiData"
+      : text.trimStart().startsWith("<")
+        ? "OSM XML"
+        : "Overpass JSON",
+  target: target ?? null,
+  importedAt: updatedAt,
+};
+const result = installBundles(
+  bundles,
+  resolve(value("--output") || "map-data"),
+  { target, provenance },
+);
+console.log(
+  JSON.stringify({ counts: result.counts, quality: result.reports }, null, 2),
+);

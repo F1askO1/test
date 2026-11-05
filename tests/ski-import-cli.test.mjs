@@ -19,6 +19,24 @@ test("offline importer writes versioned bundles atomically, rejects malformed da
             { lat: 43.01, lon: 40.01 },
           ],
         },
+        {
+          type: "way",
+          id: 124,
+          tags: { "piste:type": "downhill", "piste:difficulty": "easy" },
+          geometry: [
+            { lat: 43.001, lon: 40.001 },
+            { lat: 43.008, lon: 40.008 },
+          ],
+        },
+        {
+          type: "way",
+          id: 125,
+          tags: { aerialway: "chair_lift" },
+          geometry: [
+            { lat: 43.001, lon: 40.002 },
+            { lat: 43.008, lon: 40.009 },
+          ],
+        },
       ],
     };
     const file = path.join(dir, "source.json");

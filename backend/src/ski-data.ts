@@ -14,8 +14,11 @@ const source = z
     const u = new URL(s);
     return u.protocol === "https:" && !u.username && !u.password;
   });
-const resort = z.object({
-  id: z.string().regex(/^[\w-]{1,100}$/),
+export const resortSchema = z.object({
+  id: z
+    .string()
+    .regex(/^[\w-]{1,100}$/)
+    .refine((s) => !["__proto__", "prototype", "constructor"].includes(s)),
   name: z.string().max(200),
   aliases: z.array(z.string().max(200)).max(30),
   region: z.string().max(200),
@@ -32,8 +35,11 @@ const resort = z.object({
   lifts: z.number().nonnegative(),
   classified: z.number().nonnegative(),
   completeness: z.literal("partial"),
+  association: z
+    .enum(["search-window", "source-membership", "proximity"])
+    .optional(),
 });
-const line = z.object({
+export const lineSchema = z.object({
   id: z.string().max(100),
   name: z.string().max(200),
   kind: z.enum(["piste", "lift"]),
@@ -53,19 +59,19 @@ const line = z.object({
     )
     .max(1000),
 });
-const catalogSchema = z.object({
+export const catalogSchema = z.object({
   version: z.literal(1),
   updatedAt: z.string().nullable(),
   source: z.string().max(500),
   attribution: z.string().max(1000),
-  resorts: z.array(resort).max(20000),
+  resorts: z.array(resortSchema).max(20000),
   unassigned: z.number().nonnegative(),
   notice: z.string().max(2000).optional(),
   files: z.record(z.string(), z.string()).optional(),
 });
-const bundleSchema = z.object({
-  resort,
-  lines: z.array(line).max(15000),
+export const bundleSchema = z.object({
+  resort: resortSchema,
+  lines: z.array(lineSchema).max(15000),
   attribution: z.string().max(1000),
   updatedAt: z.string(),
 });

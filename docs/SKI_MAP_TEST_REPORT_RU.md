@@ -1,3 +1,5 @@
+> Этот отчёт относится к 269dec0. Последующая проверка загрузчика и статус живого Домбая: [REAL_RESORT_IMPORT_RU.md](REAL_RESORT_IMPORT_RU.md). Синтетические снимки ниже не являются результатом реального импорта Домбая.
+
 # Карта и GPS 2.0: результаты и границы готовности
 
 База 107d217, ветка feat/slopemate-ski-map-gps-v2. Существующий backend Windows/Tailscale, Mini App Only, Full Bot, BOT_TOKEN/initData, профили и SQLite сохраняются. Автоматический merge не выполнялся.

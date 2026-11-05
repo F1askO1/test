@@ -18,9 +18,13 @@
     "format": "prettier --write frontend backend shared tests docs README.md package.json tsconfig.json playwright.config.ts",
     "windows:diagnostics": "node scripts/launcher.mjs diagnostics",
     "soak": "node scripts/soak.mjs",
-    "maps:fetch": "node scripts/fetch-ski.mjs",
+    "maps:fetch": "node --use-env-proxy scripts/fetch-ski.mjs",
     "maps:import": "tsx scripts/import-ski.ts",
-    "gps:evaluate": "tsx scripts/evaluate-gps.ts"
+    "gps:evaluate": "tsx scripts/evaluate-gps.ts",
+    "maps:prepare": "node scripts/maps-prepare.mjs",
+    "maps:package": "tsx scripts/map-package.ts",
+    "maps:extract": "node scripts/extract-ski.mjs",
+    "maps:menu": "node scripts/maps-menu.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

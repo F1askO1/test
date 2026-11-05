@@ -461,6 +461,8 @@ export default function TrackMap({
             ? `${bundle.resort.name} · ${bundle.resort.pistes} трасс · ${bundle.resort.lifts} подъёмников · данные ${bundle.updatedAt.slice(0, 10)}`
             : `Россия · в каталоге ${catalog?.resorts.length ?? 0} курортов`}
           . Разметка OSM, полнота и открытие не подтверждены.
+          {bundle?.resort.association === "search-window" &&
+            " Объекты поисковой области; официальная принадлежность курорту не подтверждена."}
         </p>
       )}
       {catalog && !catalog.resorts.length && (

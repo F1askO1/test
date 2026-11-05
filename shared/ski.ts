@@ -29,6 +29,7 @@ export type Resort = {
   lifts: number;
   classified: number;
   completeness: "partial";
+  association?: "search-window" | "source-membership" | "proximity";
 };
 export type SkiBundle = {
   resort: Resort;
@@ -47,6 +48,7 @@ export type SkiCatalog = {
 };
 export const difficultyLabels: Record<string, string> = {
   beginner: "Учебная · зелёная",
+  novice: "Учебная · зелёная",
   easy: "Лёгкая · синяя",
   intermediate: "Средняя · красная",
   advanced: "Сложная · чёрная",
@@ -57,6 +59,7 @@ export const difficultyLabels: Record<string, string> = {
 export const pisteColor = (d: string | null) =>
   ({
     beginner: "#168640",
+    novice: "#168640",
     easy: "#1768d5",
     intermediate: "#d42f3d",
     advanced: "#17191d",

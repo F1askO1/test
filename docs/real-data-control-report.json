@@ -1,0 +1,51 @@
+{
+  "checkedAt": "2026-11-05T15:23:32.417Z",
+  "baseCommit": "269dec0",
+  "liveSource": "https://overpass-api.de/api/interpreter",
+  "actualImported": {
+    "resorts": 0,
+    "pistes": 0,
+    "lifts": 0,
+    "classificationShare": null
+  },
+  "targets": [
+    {
+      "id": "dombay",
+      "name": "Домбай",
+      "status": "blocked-before-source-response",
+      "error": "HTTPS proxy CONNECT 403",
+      "prepared": false
+    },
+    {
+      "id": "arkhyz",
+      "name": "Архыз",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "rosa-khutor",
+      "name": "Роза Хутор",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "elbrus",
+      "name": "Эльбрус",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "sheregesh",
+      "name": "Шерегеш",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    }
+  ],
+  "realScreenshots": [],
+  "testFixturesAreNotCoverage": true,
+  "requiredAction": "Review/Save/Publish cloud network draft; rerun real Dombay after observed access changes"
+}
