@@ -393,6 +393,38 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
             />
             <MapLegend />
             <Metrics a={selected.analysis} />
+            {selected.analysis.terrain && (
+              <section className="section" aria-label="Трассы и фрирайд">
+                <h2>Трассы и фрирайд</h2>
+                <p>
+                  По известным трассам:{" "}
+                  {(selected.analysis.terrain.pisteDistance / 1000).toFixed(2)}{" "}
+                  км
+                </p>
+                <p>
+                  Вероятный фрирайд:{" "}
+                  {(selected.analysis.terrain.offPisteDistance / 1000).toFixed(
+                    2,
+                  )}{" "}
+                  км ·{" "}
+                  {Math.round(selected.analysis.terrain.offPisteSeconds / 60)}{" "}
+                  мин · {selected.analysis.terrain.offPisteCount} участков
+                </p>
+                <p>
+                  Не определено:{" "}
+                  {Math.round(selected.analysis.terrain.unknownShare * 100)}%
+                  дистанции.
+                </p>
+                <p className="fine">
+                  {selected.analysis.terrain.mapCoverage === "none"
+                    ? "Для этой записи нет сохранённой привязки к карте."
+                    : "Карта неполная: вне известных трасс не означает доказанный фрирайд."}{" "}
+                  Пурпурные точки — вероятный фрирайд, серый штрих — не
+                  определено, фиолетовая линия — личный трек. Это аналитика
+                  движения, не рекомендация маршрута и не оценка безопасности.
+                </p>
+              </section>
+            )}
             <p className="fine">
               Анализ: GPS Engine {selected.analysis.engineVersion ?? 1}.{" "}
               {selected.analysis.altitudeQuality === "inferred"
@@ -412,8 +444,8 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
             )}
             <p className="fine">
               {selected.analysis.rejected} точек отфильтровано ·{" "}
-              {selected.analysis.gaps} разрывов. Цвет линии — скорость; серый —
-              подъём или остановка.
+              {selected.analysis.gaps} разрывов. Цвета трасс обозначают
+              сложность OSM; личный GPS-трек отображается отдельно.
             </p>
             <section className="section">
               <div className="section-title">

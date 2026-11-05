@@ -259,6 +259,12 @@ export function normalizeOverpass(
         ) || `${isPiste ? "Трасса" : "Подъёмник"} OSM ${e.id}`,
       kind: isPiste ? "piste" : "lift",
       coordinates: cs,
+      osmTags: { ...t },
+      routeRelations: (parents.get(e.id) ?? []).map((p) => ({
+        id: `relation-${p.id}`,
+        difficulty: p.tags?.["piste:difficulty"] ?? null,
+        name: clean(p.tags?.name || p.tags?.["piste:name"]),
+      })),
       difficulty: clean(t["piste:difficulty"]) || null,
       liftType: isLift ? t.aerialway : undefined,
       durationSeconds:

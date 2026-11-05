@@ -45,6 +45,16 @@ export const lineSchema = z.object({
   kind: z.enum(["piste", "lift"]),
   coordinates: z.array(coord).min(2).max(30000),
   difficulty: z.string().max(100).nullable(),
+  osmTags: z.record(z.string(), z.string().max(500)).optional(),
+  routeRelations: z
+    .array(
+      z.object({
+        id: z.string(),
+        difficulty: z.string().nullable(),
+        name: z.string(),
+      }),
+    )
+    .optional(),
   liftType: z.string().max(100).optional(),
   durationSeconds: z.number().positive().nullable().optional(),
   direction: z.union([z.literal(1), z.literal(-1)]).nullable(),

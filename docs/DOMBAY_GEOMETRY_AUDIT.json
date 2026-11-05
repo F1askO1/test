@@ -1,0 +1,108 @@
+{
+  "resort": "ru-dombay",
+  "sourceObjects": 149,
+  "pistes": 136,
+  "lifts": 13,
+  "repeatedIds": [],
+  "exactWholeLineGroups": [],
+  "sourceEdges": 1638,
+  "uniqueSourceEdges": 1633,
+  "sharedSourceEdges": [
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940482",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940482",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940484",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940501",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "easy",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940517",
+        "https://www.openstreetmap.org/way/1469753838"
+      ],
+      "difficulties": [
+        "easy",
+        "easy"
+      ]
+    }
+  ],
+  "approximateCandidatesOnly": [],
+  "partialApproximateCandidatesOnly": [
+    {
+      "ids": [
+        "way-1469753698",
+        "way-469940509"
+      ],
+      "shorterCoverage": 1,
+      "sampledMeters": 88.63597217568076
+    },
+    {
+      "ids": [
+        "way-1469753725",
+        "way-1117972576"
+      ],
+      "shorterCoverage": 0.8432505256153913,
+      "sampledMeters": 53.9910449949869
+    }
+  ],
+  "selfCrossings": [],
+  "closedContours": [
+    {
+      "id": "way-469940513",
+      "source": "https://www.openstreetmap.org/way/469940513",
+      "vertices": 26,
+      "areaTag": "NOT_PRESERVED_IN_PACKAGE"
+    },
+    {
+      "id": "way-469940517",
+      "source": "https://www.openstreetmap.org/way/469940517",
+      "vertices": 198,
+      "areaTag": "NOT_PRESERVED_IN_PACKAGE"
+    },
+    {
+      "id": "way-879140376",
+      "source": "https://www.openstreetmap.org/way/879140376",
+      "vertices": 144,
+      "areaTag": "NOT_PRESERVED_IN_PACKAGE"
+    }
+  ],
+  "displayLinearSegments": 1273,
+  "renderedPaths": 149,
+  "displaySharedSegments": 5,
+  "displayConflictSegments": 3,
+  "sourceIdsPreserved": 149,
+  "warning": "Approximate candidates are NOT automatically merged. Closed legacy contours have unconfirmed area semantics. Counts are edges, not official routes."
+}

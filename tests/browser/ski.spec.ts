@@ -59,6 +59,21 @@ const lines = ["beginner", "easy", "intermediate", "advanced"].map(
       [39.996 + i * 0.002, 42.997],
     ],
     direction: null,
+    routeRelations:
+      i === 1
+        ? [
+            {
+              id: "relation-1",
+              name: "ТЕСТ общий маршрут A",
+              difficulty: "easy",
+            },
+            {
+              id: "relation-2",
+              name: "ТЕСТ общий маршрут B",
+              difficulty: "intermediate",
+            },
+          ]
+        : [],
     stations: [],
     source: "https://www.openstreetmap.org/copyright",
   }),
@@ -150,6 +165,12 @@ for (const [width, height] of [
     await expect(
       page.getByRole("region", { name: "Карточка объекта карты" }),
     ).toContainText("Лёгкая · синяя");
+    await expect(
+      page.getByRole("link", { name: "ТЕСТ общий маршрут A" }),
+    ).toHaveAttribute("href", "https://www.openstreetmap.org/relation/1");
+    await expect(
+      page.getByRole("link", { name: "ТЕСТ общий маршрут B" }),
+    ).toBeVisible();
     await page.screenshot({
       path: `artifacts/ski-map/${width}/piste-synthetic.png`,
       fullPage: true,

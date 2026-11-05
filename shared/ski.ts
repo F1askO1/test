@@ -6,6 +6,9 @@ export type SkiLine = {
   kind: "piste" | "lift";
   coordinates: Coord[];
   difficulty: string | null;
+  // Optional provenance in new imports; old packages remain readable.
+  osmTags?: Record<string, string>;
+  routeRelations?: { id: string; difficulty: string | null; name: string }[];
   liftType?: string;
   durationSeconds?: number | null;
   direction: 1 | -1 | null;
@@ -115,7 +118,14 @@ export function matchPiste(points: Point[], lines: SkiLine[]) {
   )
     return null;
   const scores = lines
-    .filter((l) => l.kind === "piste")
+    .filter(
+      (l) =>
+        l.kind === "piste" &&
+        l.osmTags?.area !== "yes" &&
+        (l.osmTags?.area === "no" ||
+          l.coordinates[0][0] !== l.coordinates.at(-1)![0] ||
+          l.coordinates[0][1] !== l.coordinates.at(-1)![1]),
+    )
     .map((line) => ({
       line,
       score:

@@ -10,6 +10,10 @@ test("REAL DATA ONLY: Dombay source pistes, lifts and actual terrain tiles", asy
   page,
 }) => {
   test.skip(
+    process.env.SLOPEMATE_MAP_OFFLINE === "1",
+    "Сеть тайлов запрещена политикой среды; реальную подложку этот прогон не проверяет.",
+  );
+  test.skip(
     !resort,
     "Реальный набор Домбая не получен: источник запрещён network policy. Синтетика не подставляется.",
   );

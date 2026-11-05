@@ -1,7 +1,14 @@
+import {
+  displayGeometry,
+  displayPaths,
+  closedContour,
+} from "../../shared/ski-display";
+import { tileHealth, type TileHealth } from "./ski/tile-health";
+import type { TerrainSegment } from "../../shared/terrain";
 import { Search, Layers, LocateFixed, Info, ChevronDown } from "lucide-react";
 import { MapSheet } from "./ski/MapSheet";
 import { skiLineStyle, skiHaloStyle, showStations } from "./ski/map-style";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { analyze, type Point, type Analysis } from "../../shared/track";
@@ -9,6 +16,7 @@ import {
   pisteColor,
   difficultyLabels,
   lineLength,
+  project,
   type SkiLine,
   type Coord,
 } from "../../shared/ski";
@@ -39,12 +47,25 @@ export default function TrackMap({
     track = useRef<L.LayerGroup | null>(null),
     features = useRef<L.LayerGroup | null>(null),
     base = useRef<L.TileLayer | null>(null),
+    trackRenderer = useRef<L.Canvas | null>(null),
+    renderedAnalysis = useRef<Analysis | null>(null),
+    featureRenderers = useRef<{
+      piste: L.Canvas;
+      lift: L.Canvas;
+      selection: L.Canvas;
+    } | null>(null),
     lastView = useRef("");
+  const [tileStatus, setTileStatus] = useState<TileHealth>(tileHealth(0, 0)),
+    [fallback, setFallback] = useState(false),
+    [rawGeometry, setRawGeometry] = useState(false),
+    [sharedSources, setSharedSources] = useState<SkiLine[]>([]),
+    [terrainSegment, setTerrainSegment] = useState<TerrainSegment | null>(null);
   const [tileFailed, setTileFailed] = useState(false),
     [layers, setLayers] = useState(false),
     [chooser, setChooser] = useState(false),
     [info, setInfo] = useState(false),
     [zoom, setZoom] = useState(3),
+    [mapView, setMapView] = useState(""),
     [pistes, setPistes] = useState(true),
     [lifts, setLifts] = useState(true),
     [myTrack, setMyTrack] = useState(true),
@@ -58,6 +79,8 @@ export default function TrackMap({
   followRef.current = follow;
   const catalog = ski?.catalog,
     bundle = ski?.bundle;
+  const display = useMemo(() => displayGeometry(bundle?.lines ?? []), [bundle]);
+  const paths = useMemo(() => displayPaths(display.segments), [display]);
   useEffect(() => {
     if (!ref.current) return;
     const m = L.map(ref.current, {
@@ -73,7 +96,22 @@ export default function TrackMap({
     m.createPane("ski-pistes").style.zIndex = "420";
     m.createPane("ski-selection").style.zIndex = "430";
     m.createPane("ski-track").style.zIndex = "440";
+    trackRenderer.current = L.canvas({ pane: "ski-track", tolerance: 7 });
+    featureRenderers.current = {
+      piste: L.canvas({ pane: "ski-pistes", padding: 0.2, tolerance: 7 }),
+      lift: L.canvas({ pane: "ski-lifts", padding: 0.2, tolerance: 7 }),
+      selection: L.canvas({
+        pane: "ski-selection",
+        padding: 0.2,
+        tolerance: 7,
+      }),
+    };
     m.on("zoomend", () => setZoom(m.getZoom()));
+    m.on("moveend", () =>
+      setMapView(
+        `${m.getCenter().lat.toFixed(7)},${m.getCenter().lng.toFixed(7)},${m.getZoom()}`,
+      ),
+    );
     L.control
       .zoom({
         position: "topright",
@@ -112,8 +150,41 @@ export default function TrackMap({
       },
     ).addTo(m);
     base.current = tiles;
-    tiles.on("tileerror", () => setTileFailed(true));
+    let loaded = 0,
+      failed = 0,
+      disposed = false;
+    const update = (timeout = false) => {
+      if (disposed) return;
+      const status = tileHealth(loaded, failed, timeout);
+      setTileStatus(status);
+      setTileFailed(status.state === "unavailable");
+      if (status.state === "unavailable" && terrain) {
+        setFallback(true);
+        setTerrain(false);
+      }
+    };
+    tiles.on("loading", () => {
+      loaded = 0;
+      failed = 0;
+      update();
+    });
+    tiles.on("tileload", () => {
+      loaded++;
+      update();
+    });
+    tiles.on("tileerror", () => {
+      failed++;
+      update();
+    });
+    let timer = window.setTimeout(() => update(true), 12000);
+    tiles.on("loading", () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => update(true), 12000);
+    });
+    tiles.on("load", () => update(true));
     return () => {
+      disposed = true;
+      window.clearTimeout(timer);
       tiles.remove();
     };
   }, [terrain]);
@@ -140,36 +211,74 @@ export default function TrackMap({
       (l) =>
         !((l.kind === "piste" && !pistes) || (l.kind === "lift" && !lifts)),
     );
-    const renderers = {
-      piste: L.canvas({ pane: "ski-pistes", padding: 0.2, tolerance: 7 }),
-      lift: L.canvas({ pane: "ski-lifts", padding: 0.2, tolerance: 7 }),
-      selection: L.canvas({
-        pane: "ski-selection",
-        padding: 0.2,
-        tolerance: 7,
-      }),
-    };
-    // Thin casing only for black/selected lines, drawn BEFORE colors. Never 7px halos on every segment.
-    for (const l of visible) {
-      const halo = skiHaloStyle(l, zoom);
+    // Reuse renderers across zoom/state changes. Removing Canvas during a
+    // Leaflet zoom callback can leave a pending redraw with a destroyed context.
+    const renderers = featureRenderers.current!;
+    const draw = (
+      coordinates: Coord[],
+      sources: SkiLine[],
+      conflict = false,
+    ) => {
+      const l = sources[0];
+      if (!visible.includes(l)) return;
+      const style = conflict
+        ? { ...skiLineStyle(l, zoom), color: "#626674", dashArray: "2 3" }
+        : skiLineStyle(l, zoom);
+      const halo = conflict ? null : skiHaloStyle(l, zoom);
       if (halo)
-        L.polyline(l.coordinates.map(latlng), {
+        L.polyline(coordinates.map(latlng), {
           ...halo,
           renderer: renderers[l.kind],
         }).addTo(g);
+      L.polyline(coordinates.map(latlng), {
+        ...style,
+        renderer: renderers[l.kind],
+      })
+        .bindTooltip(
+          textLabel(
+            conflict
+              ? "Общий участок: конфликт сложности"
+              : sources.map((l) => l.name).join(" / "),
+          ),
+          { sticky: true },
+        )
+        .on("click", () => {
+          setSharedSources(sources);
+          setSelected(l);
+          setChooser(false);
+        })
+        .addTo(g);
+    };
+    if (rawGeometry) visible.forEach((l) => draw(l.coordinates, [l]));
+    else {
+      // Legacy rings lost area tags during import. Show as contextual contours,
+      // not as several colored ski centerlines. Never invent a centerline.
+      for (const l of display.contours.filter((l) => visible.includes(l))) {
+        L.polygon(l.coordinates.map(latlng), {
+          renderer: renderers.piste,
+          color: "#798594",
+          weight: zoom >= 16 ? 0.65 : 0,
+          dashArray: "2 4",
+          fillColor: pisteColor(l.difficulty),
+          fillOpacity: 0.045,
+        })
+          .bindTooltip(textLabel("Замкнутый контур OSM: " + l.name))
+          .on("click", () => {
+            setSharedSources([l]);
+            setSelected(l);
+          })
+          .addTo(g);
+      }
     }
-    for (const l of visible) {
-      const cs = l.coordinates.map(latlng),
-        path = L.polyline(cs, {
-          ...skiLineStyle(l, zoom),
-          renderer: renderers[l.kind],
-        }).addTo(g);
-      path.bindTooltip(textLabel(l.name), { sticky: true }).on("click", () => {
-        setSelected(l);
-        setChooser(false);
-      });
-      if (l.kind === "lift" && showStations(zoom))
-        for (const station of l.stations)
+    if (!rawGeometry)
+      paths.forEach((s) => draw(s.coordinates, s.sources, s.conflict));
+    if (lifts && showStations(zoom)) {
+      const seen = new Set<string>();
+      for (const l of visible.filter((l) => l.kind === "lift"))
+        for (const station of l.stations) {
+          const key = station.coordinate.join(",");
+          if (seen.has(key)) continue;
+          seen.add(key);
           L.circleMarker(latlng(station.coordinate), {
             radius: 2.5,
             color: "#fff",
@@ -179,8 +288,12 @@ export default function TrackMap({
             renderer: renderers.lift,
           })
             .bindTooltip(textLabel(station.name))
-            .on("click", () => setSelected(l))
+            .on("click", () => {
+              setSharedSources([l]);
+              setSelected(l);
+            })
             .addTo(g);
+        }
     }
     if (selected && visible.some((l) => l.id === selected.id)) {
       const cs = selected.coordinates.map(latlng),
@@ -195,9 +308,20 @@ export default function TrackMap({
     }
     return () => {
       g.clearLayers();
-      Object.values(renderers).forEach((r) => r.remove());
+      // Renderers live until m.remove(); only source paths are replaced.
     };
-  }, [bundle, catalog, pistes, lifts, ski?.select, zoom, selected]);
+  }, [
+    bundle,
+    catalog,
+    pistes,
+    lifts,
+    ski?.select,
+    zoom,
+    selected,
+    display,
+    paths,
+    rawGeometry,
+  ]);
 
   useEffect(() => {
     const m = map.current;
@@ -223,8 +347,11 @@ export default function TrackMap({
     g.clearLayers();
     const view = run ? points.slice(run.start, run.end + 1) : points;
     // Reuse worker analysis while recording; historical analysis follows its saved version.
-    const a = run ? analyze(view) : (analysis ?? analyze(view));
-    if (myTrack) {
+    const a = run
+      ? analyze(view, { lines: bundle?.lines })
+      : (analysis ?? analyze(view, { lines: bundle?.lines }));
+    renderedAnalysis.current = a;
+    if (myTrack && a.edges.length) {
       const segments: L.LatLngTuple[][] = [];
       for (const e of a.edges) {
         if (!e.seconds) continue;
@@ -240,22 +367,56 @@ export default function TrackMap({
         color: "#fff",
         weight: 4.2,
         pane: "ski-track",
+        renderer: trackRenderer.current!,
         opacity: 0.85,
         interactive: false,
       }).addTo(g);
-      L.polyline(segments, {
-        color: "#862bd6",
-        weight: 2.6,
-        opacity: 1,
-        pane: "ski-track",
-      }).addTo(g);
+      if (!a.terrain)
+        L.polyline(segments, {
+          color: "#862bd6",
+          weight: 2.6,
+          opacity: 1,
+          pane: "ski-track",
+          renderer: trackRenderer.current!,
+        }).addTo(g);
     }
+    if (myTrack && a.terrain)
+      for (const segment of a.terrain.segments) {
+        const cs = a.points
+          .slice(segment.from, segment.to + 1)
+          .map((p) => [p.lat, p.lon] as L.LatLngTuple);
+        if (cs.length < 2) continue;
+        const off = segment.type === "off_piste",
+          unknown = segment.type === "unknown";
+        L.polyline(cs, {
+          pane: "ski-track",
+          renderer: trackRenderer.current!,
+          color: off ? "#bc40df" : unknown ? "#747d8b" : "#862bd6",
+          weight: off ? 3.5 : 2.6,
+          dashArray: off ? "1 7" : unknown ? "3 5" : undefined,
+          lineCap: "round",
+        })
+          .bindTooltip(
+            textLabel(
+              off
+                ? "Вероятный фрирайд"
+                : segment.type === "piste"
+                  ? "Личный трек: трасса"
+                  : segment.type === "lift"
+                    ? "Личный трек: подъёмник"
+                    : "Не определено",
+            ),
+          )
+          .on("click", () => setTerrainSegment(segment))
+          .addTo(g);
+      }
     if (view.length) {
       const first = view[0],
         p = view.at(-1)!;
       L.circleMarker([first.lat, first.lon], {
         radius: 5,
         pane: "ski-track",
+        renderer: trackRenderer.current!,
         color: "#fff",
         fillColor: "#862bd6",
         fillOpacity: 1,
@@ -272,6 +433,7 @@ export default function TrackMap({
       L.circleMarker([p.lat, p.lon], {
         radius: 7,
         pane: "ski-track",
+        renderer: trackRenderer.current!,
         color: "#fff",
         weight: 3,
         fillColor: live ? "#2379d5" : "#862bd6",
@@ -305,7 +467,58 @@ export default function TrackMap({
         lastView.current = key;
       }
     }
-  }, [points, run, analysis, myTrack, live, follow]);
+  }, [points, run, analysis, myTrack, live, follow, bundle]);
+  // Canvas elements cover the entire viewport: DOM hit testing cannot pass
+  // through an empty higher pane to lower lift/piste canvases. Pick centrally
+  // in geographic space, including touch tolerance, rather than relying on that.
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    const click = (event: L.LeafletMouseEvent) => {
+      const point = { lon: event.latlng.lng, lat: event.latlng.lat, t: 1 };
+      const tolerance =
+        (9 * 40075016.686 * Math.cos((point.lat * Math.PI) / 180)) /
+        (256 * 2 ** m.getZoom());
+      const personal = myTrack ? renderedAnalysis.current : null;
+      if (personal?.terrain) {
+        const matches = personal.terrain.segments
+          .map((segment) => ({
+            segment,
+            distance: project(
+              point,
+              personal.points
+                .slice(segment.from, segment.to + 1)
+                .map((p) => [p.lon, p.lat] as Coord),
+            ).distance,
+          }))
+          .sort((a, b) => a.distance - b.distance);
+        if (matches[0]?.distance <= tolerance) {
+          setSelected(null);
+          setTerrainSegment(matches[0].segment);
+          setChooser(false);
+          return;
+        }
+      }
+      const candidates = paths
+        .filter((p) => (p.sources[0].kind === "piste" ? pistes : lifts))
+        .map((p) => ({
+          path: p,
+          distance: project(point, p.coordinates).distance,
+        }))
+        .sort((a, b) => a.distance - b.distance);
+      if (candidates[0]?.distance <= tolerance) {
+        const sources = candidates[0].path.sources;
+        setTerrainSegment(null);
+        setSharedSources(sources);
+        setSelected(sources[0]);
+        setChooser(false);
+      }
+    };
+    m.on("click", click);
+    return () => {
+      m.off("click", click);
+    };
+  }, [paths, pistes, lifts, myTrack]);
   const locate = () => {
     const p = points.at(-1);
     if (live && p) {
@@ -326,6 +539,7 @@ export default function TrackMap({
         L.circleMarker([p.coords.latitude, p.coords.longitude], {
           radius: 7,
           pane: "ski-track",
+          renderer: trackRenderer.current!,
           color: "#fff",
           fillColor: "#2379d5",
           fillOpacity: 1,
@@ -377,6 +591,10 @@ export default function TrackMap({
     <section
       className={`ski-map ${large ? "ski-map-large" : ""}`}
       aria-label="Карта курорта"
+      data-map-view={mapView}
+      data-display-segments={display.segments.length}
+      data-source-lines={bundle?.lines.length ?? 0}
+      data-geometry-mode={rawGeometry ? "raw" : "normalized"}
     >
       {ski && (
         <div className="map-searchbar">
@@ -432,11 +650,22 @@ export default function TrackMap({
             </button>
           )}
         </div>
-        {tileFailed && (
+        {(tileFailed || fallback) && (
           <div className="map-tile-notice" role="status">
-            <span>Подложка недоступна</span>
+            <span>
+              {tileFailed
+                ? "Подложка недоступна"
+                : "Рельеф недоступен · резерв OSM"}
+            </span>
             {terrain && (
-              <button onClick={() => setTerrain(false)}>Открыть OSM</button>
+              <button
+                onClick={() => {
+                  setFallback(true);
+                  setTerrain(false);
+                }}
+              >
+                Открыть OSM
+              </button>
             )}
           </div>
         )}
@@ -513,6 +742,7 @@ export default function TrackMap({
                 <button
                   key={l.id}
                   onClick={() => {
+                    setSharedSources([l]);
                     setSelected(l);
                     setChooser(false);
                     setQuery("");
@@ -540,7 +770,10 @@ export default function TrackMap({
               <input
                 type="checkbox"
                 checked={terrain}
-                onChange={(e) => setTerrain(e.target.checked)}
+                onChange={(e) => {
+                  setFallback(false);
+                  setTerrain(e.target.checked);
+                }}
               />
               Рельеф OpenTopoMap
             </label>
@@ -569,7 +802,19 @@ export default function TrackMap({
               Мой трек
             </label>
           </div>
+          <label className="fine">
+            <input
+              type="checkbox"
+              checked={rawGeometry}
+              onChange={(e) => setRawGeometry(e.target.checked)}
+            />{" "}
+            Исходные линии OSM (диагностика)
+          </label>
           {legend}
+          <p className="fine">
+            Контуры — замкнутые объекты OSM с неподтверждённым назначением.
+            Общий участок с конфликтом сложности — серый точечный.
+          </p>
           <button className="primary" onClick={() => setLayers(false)}>
             Готово
           </button>
@@ -593,6 +838,12 @@ export default function TrackMap({
               </div>
               <p className="fine">
                 Данные: {bundle.updatedAt.slice(0, 10)} · {bundle.resort.region}
+              </p>
+              <p className="fine">
+                Исходных объектов: {bundle.lines.length}. Уникальных линейных
+                рёбер: {display.segments.length}. Замкнутых контуров:{" "}
+                {display.contours.length}. Ребро — часть геометрии, не отдельная
+                трасса.
               </p>
               {legend}
               <p>
@@ -623,8 +874,61 @@ export default function TrackMap({
             </>
           )}
           <p className="fine">
+            Подложка: {terrain ? "OpenTopoMap" : "OpenStreetMap"} ·{" "}
+            {tileStatus.state} · загружено {tileStatus.loaded}, ошибок{" "}
+            {tileStatus.failed}.{" "}
+            {fallback
+              ? "Включён резерв; он не содержит топографического рельефа."
+              : ""}
+          </p>
+          <p className="fine">
             Тайлы требуют интернета. Отсутствие подложки не останавливает запись
             GPS. Фиолетовый — ваш маршрут, пунктир — подъёмник.
+          </p>
+        </MapSheet>
+      )}
+      {terrainSegment && (
+        <MapSheet
+          title={
+            terrainSegment.type === "off_piste"
+              ? "Вероятный фрирайд"
+              : "Участок личного трека"
+          }
+          onClose={() => setTerrainSegment(null)}
+        >
+          <p>
+            {terrainSegment.type === "off_piste"
+              ? "Вне известных трасс — не подтверждено"
+              : terrainSegment.type === "piste"
+                ? "По известной трассе"
+                : terrainSegment.type === "lift"
+                  ? "Подъёмник"
+                  : "Не определено"}
+          </p>
+          <p>
+            {Math.round(terrainSegment.distance)} м ·{" "}
+            {Math.round(terrainSegment.seconds)} с ·{" "}
+            {terrainSegment.avgSpeed != null
+              ? (terrainSegment.avgSpeed * 3.6).toFixed(1) + " км/ч"
+              : "скорость неизвестна"}
+          </p>
+          <p>
+            Перепад:{" "}
+            {terrainSegment.drop == null
+              ? "нет достоверных данных"
+              : Math.round(terrainSegment.drop) + " м"}
+            . Уверенность:{" "}
+            {terrainSegment.confidence === "probable"
+              ? "вероятно"
+              : terrainSegment.confidence === "confirmed"
+                ? "подтверждено"
+                : "недостаточно данных"}
+            .
+          </p>
+          <p className="fine">
+            Аналитика записанного движения. Неполная карта может не содержать
+            настоящую трассу. Это не официальный маршрут и не оценка
+            безопасности склона.
           </p>
         </MapSheet>
       )}
@@ -639,6 +943,32 @@ export default function TrackMap({
             aria-label="Карточка объекта карты"
           >
             <h3>{selected.name}</h3>
+            {closedContour(selected) && (
+              <p className="fine">
+                Замкнутый контур OSM. В старом пакете отсутствуют теги area:
+                назначение не подтверждено. Это не доказанная осевая линия
+                трассы; длина периметра не равна длине спуска.
+              </p>
+            )}
+            {sharedSources.length > 1 && (
+              <div>
+                <p>Общий геометрический участок. Все исходные объекты:</p>
+                {sharedSources.map((l) => (
+                  <p key={l.id}>
+                    <a
+                      href={l.source}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {l.id}
+                    </a>{" "}
+                    ·{" "}
+                    {difficultyLabels[l.difficulty ?? "unknown"] ??
+                      l.difficulty}
+                  </p>
+                ))}
+              </div>
+            )}
             <p>
               {selected.kind === "piste"
                 ? (difficultyLabels[selected.difficulty ?? "unknown"] ??
@@ -647,6 +977,32 @@ export default function TrackMap({
               · {(lineLength(selected.coordinates) / 1000).toFixed(2)} км по
               геометрии
             </p>
+            {!!selected.routeRelations?.length && (
+              <div>
+                <p>Маршруты OSM этого участка:</p>
+                {selected.routeRelations.map((r) => (
+                  <p key={r.id}>
+                    <a
+                      href={
+                        "https://www.openstreetmap.org/relation/" +
+                        r.id.replace("relation-", "")
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {r.name || r.id}
+                    </a>{" "}
+                    ·{" "}
+                    {difficultyLabels[r.difficulty ?? "unknown"] ??
+                      r.difficulty}
+                  </p>
+                ))}
+                <p className="fine">
+                  При конфликте тегов сложность участка не выбирается
+                  произвольно.
+                </p>
+              </div>
+            )}
             {selected.durationSeconds != null && (
               <p>
                 Время в OSM: ~{Math.round(selected.durationSeconds / 60)} мин

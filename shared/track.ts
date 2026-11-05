@@ -26,7 +26,9 @@ export type Run = {
   seconds: number;
   drop: number | null;
 };
+import { terrainAnalysis, type TerrainAnalysis } from "./terrain.js";
 export type Analysis = {
+  terrain?: TerrainAnalysis;
   points: Point[];
   edges: Edge[];
   runs: Run[];
@@ -217,7 +219,7 @@ export function analyze(
     }
   }
   flush();
-  return {
+  const result: Analysis = {
     ...base,
     engineVersion: 2,
     edges,
@@ -236,4 +238,6 @@ export function analyze(
     liftSeconds,
     pisteMatches: [...matches.values()],
   };
+  result.terrain = terrainAnalysis(result, context.lines ?? []);
+  return result;
 }

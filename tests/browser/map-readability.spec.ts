@@ -95,6 +95,43 @@ for (const [width, height] of [
       path: `artifacts/map-readability/${width}/zoomed.png`,
       animations: "disabled",
     });
+    const view = await page.locator(".ski-map").getAttribute("data-map-view");
+    await page.getByRole("button", { name: "Слои", exact: true }).click();
+    await page.getByLabel("Исходные линии OSM (диагностика)").check();
+    await page.getByRole("button", { name: "Готово", exact: true }).click();
+    await page.screenshot({
+      path: `artifacts/map-readability/${width}/geometry-before.png`,
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: "Слои", exact: true }).click();
+    await page.getByLabel("Исходные линии OSM (диагностика)").uncheck();
+    await page.getByRole("button", { name: "Готово", exact: true }).click();
+    await expect(page.locator(".ski-map")).toHaveAttribute(
+      "data-map-view",
+      view!,
+    );
+    await expect(page.locator(".ski-map")).toHaveAttribute(
+      "data-source-lines",
+      "149",
+    );
+    await expect(page.locator(".ski-map")).toHaveAttribute(
+      "data-display-segments",
+      "1273",
+    );
+    await page.screenshot({
+      path: `artifacts/map-readability/${width}/geometry-after.png`,
+      animations: "disabled",
+    });
+    // Repeated redraw must not accumulate Canvas renderers/layers.
+    const canvases = await page.locator(".leaflet-pane canvas").count();
+    for (let i = 0; i < 2; i++) {
+      await page
+        .getByRole("button", { name: "Приблизить", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Отдалить", exact: true }).click();
+    }
+    expect(await page.locator(".leaflet-pane canvas").count()).toBe(canvases);
+    expect(canvases).toBeLessThanOrEqual(4);
     await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
     const piste = bundle.lines.find((l: any) => l.kind === "piste");
     await page.getByLabel("Курорт или трасса").fill(piste.name);
@@ -110,6 +147,52 @@ for (const [width, height] of [
       animations: "disabled",
     });
     await page.getByRole("button", { name: "Закрыть: Трасса" }).click();
+    // Search fits bounds with Leaflet animation; wait for its final geometry before tapping.
+    await expect(
+      page.locator(".leaflet-container.leaflet-zoom-anim"),
+    ).toHaveCount(0);
+    await page.waitForTimeout(350);
+    const thinHit = await page.evaluate(() => {
+      const hits: { x: number; y: number }[] = [];
+      for (const c of document.querySelectorAll<HTMLCanvasElement>(
+        ".leaflet-ski-pistes-pane canvas",
+      )) {
+        const r = c.getBoundingClientRect(),
+          d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+        for (let y = 0; y < c.height; y += 2)
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4;
+            if (
+              Math.abs(d[i] - 23) < 8 &&
+              Math.abs(d[i + 1] - 104) < 8 &&
+              Math.abs(d[i + 2] - 213) < 8 &&
+              d[i + 3] > 150
+            ) {
+              const px = r.x + (x * r.width) / c.width,
+                py = r.y + (y * r.height) / c.height;
+              if (
+                px > 60 &&
+                px < innerWidth - 70 &&
+                py > 180 &&
+                py < innerHeight - 160
+              )
+                hits.push({ x: px, y: py });
+            }
+          }
+      }
+      return (
+        hits.sort(
+          (a, b) =>
+            Math.abs(a.y - innerHeight / 2) - Math.abs(b.y - innerHeight / 2),
+        )[0] ?? null
+      );
+    });
+    expect(thinHit).not.toBeNull();
+    await page.touchscreen.tap(thinHit!.x, thinHit!.y);
+    await expect(
+      page.getByRole("region", { name: "Карточка объекта карты" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Закрыть: Трасса" }).click();
     await page.getByRole("button", { name: "Слои", exact: true }).click();
     await expect(
       page.getByRole("dialog", { name: "Слои карты" }),
@@ -123,5 +206,25 @@ for (const [width, height] of [
     });
     await page.getByRole("button", { name: "Готово", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    if (width === 375) {
+      await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
+      await page.getByLabel("Курорт", { exact: true }).selectOption("");
+      await expect(page.locator(".ski-map")).toHaveAttribute(
+        "data-source-lines",
+        "0",
+      );
+      await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
+      await page
+        .getByLabel("Курорт", { exact: true })
+        .selectOption("ru-dombay");
+      await expect(page.locator(".ski-map")).toHaveAttribute(
+        "data-source-lines",
+        "149",
+      );
+      expect(
+        await page.locator(".leaflet-pane canvas").count(),
+      ).toBeLessThanOrEqual(4);
+    }
+    await page.waitForTimeout(150);
     expect(errors).toEqual([]);
   });
