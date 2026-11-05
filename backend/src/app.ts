@@ -1,10 +1,11 @@
 import express from "express";
+import { log, safeError } from "./safe-log.js";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { verifyInitData, type TelegramUser } from "./auth.js";
@@ -24,6 +25,9 @@ export type Config = {
   origins: string[];
   trustProxy: number;
   status?: () => unknown;
+  deploymentId?: string;
+  endpoint?: () => unknown;
+  diagnosticsToken?: string;
 };
 const point = z.object({
   lat: z.number().min(-90).max(90),
@@ -103,28 +107,51 @@ export function createApp(db: DB, config: Config) {
   );
   app.use(express.json({ limit: "12mb" }));
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
-  app.get("/api/status", (_req, res) => {
+  const componentStatus = () => {
     let database = "ready";
     try {
       db.prepare("SELECT 1").get();
     } catch {
       database = "unavailable";
     }
-    res
-      .set("Cache-Control", "no-store")
-      .json({
-        http: "ready",
-        mode:
-          config.production && !config.devAuth
-            ? "production-private"
-            : "local-development",
-        database,
-        telegram: config.status?.() ?? { bot: "disabled", api: "unknown" },
-      });
+    return {
+      http: "ready",
+      mode:
+        config.production && !config.devAuth
+          ? "production-private"
+          : "local-development",
+      database,
+      deploymentId: config.deploymentId ?? "unconfigured",
+      telegram: config.status?.() ?? { bot: "disabled", api: "unknown" },
+      publicEndpoint: config.endpoint?.() ?? { state: "unknown" },
+    };
+  };
+  app.get("/api/status", (_req, res) => {
+    const status = componentStatus();
+    const internal = status.telegram as Record<string, unknown>;
+    const telegram = Object.fromEntries(
+      ["bot", "api", "setup", "menu", "transport"]
+        .filter((k) => internal[k] !== undefined)
+        .map((k) => [k, internal[k]]),
+    );
+    res.set("Cache-Control", "no-store").json({ ...status, telegram });
+  });
+  app.get("/api/diagnostics", (req, res) => {
+    const actual = Buffer.from(req.get("authorization") ?? ""),
+      expected = Buffer.from("Bearer " + (config.diagnosticsToken ?? ""));
+    if (
+      !config.diagnosticsToken ||
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    ) {
+      res.status(404).end();
+      return;
+    }
+    res.set("Cache-Control", "no-store").json(componentStatus());
   });
   app.use("/api", (req, res, next) => {
+    let user: TelegramUser;
     try {
-      let user: TelegramUser;
       const h = req.get("authorization") ?? "";
       if (h.startsWith("tma ") && config.token)
         user = verifyInitData(h.slice(4), config.token);
@@ -132,19 +159,25 @@ export function createApp(db: DB, config: Config) {
         user = { id: 1, first_name: "Райдер", username: "local_rider" };
       else {
         res.status(401).json({
-          error:
-            "Откройте приложение через Telegram. Локально включите DEV_AUTH.",
+          error: config.production
+            ? "Откройте приложение через Telegram."
+            : "Откройте приложение через Telegram. Локально включите DEV_AUTH.",
         });
         return;
       }
-      ensureUser(db, user);
-      res.locals.user = user;
-      next();
     } catch {
       res.status(401).json({
         error:
-          "Авторизация недействительна или истекла. Откройте приложение заново.",
+          "Авторизация недействительна или истекла. Переоткройте приложение через бота; черновик остаётся на устройстве.",
       });
+      return;
+    }
+    try {
+      ensureUser(db, user);
+      res.locals.user = user;
+      next();
+    } catch (e) {
+      next(e);
     }
   });
   app.get("/api/me", (_req, res) => {
@@ -265,7 +298,7 @@ export function createApp(db: DB, config: Config) {
         err instanceof multer.MulterError ||
         err.type === "entity.too.large";
       const status = bad ? 400 : err.status === 400 ? 400 : 500;
-      if (status === 500) console.error("API error:", err.message);
+      if (status === 500) log("http-api", safeError(err));
       res.status(status).json({
         error:
           err instanceof z.ZodError

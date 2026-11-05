@@ -6,6 +6,8 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  endpointIdentity,
+  prepareLocalDiagnostics,
   LauncherError,
   redact,
   errorCode,
@@ -30,7 +32,8 @@ let env = {},
   release,
   stopping = false,
   tunnelState = { registered: false, url: "", pid: 0 },
-  httpChild;
+  httpChild,
+  activeIdentity;
 const children = new Set(),
   stamp = new Date().toISOString().replace(/[:.]/g, "-"),
   logPath = path.join(logs, `launcher-${stamp}.log`);
@@ -45,7 +48,7 @@ function load() {
       "Нет .env. Сначала запустите 01_INSTALL.bat, затем 05_EDIT_ENV.bat.",
     );
   env = readEnv(envPath);
-  secrets = [env.BOT_TOKEN, env.TELEGRAM_PROXY_URL];
+  secrets = [env.BOT_TOKEN, env.TELEGRAM_PROXY_URL, env.DIAGNOSTICS_TOKEN];
   if (env.TELEGRAM_PROXY_URL) {
     try {
       const u = new URL(env.TELEGRAM_PROXY_URL);
@@ -313,7 +316,11 @@ async function startTunnel() {
       "Неверные TUNNEL_PROTOCOL / TUNNEL_EDGE_IP_VERSION.",
     );
   // Only cloudflared goes direct, irrespective of inherited HTTP proxy settings. Does not bypass OS TUN/routes.
-  const direct = {};
+  const direct = {
+    BOT_TOKEN: "",
+    TELEGRAM_PROXY_URL: "",
+    DIAGNOSTICS_TOKEN: "",
+  };
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -412,6 +419,10 @@ async function monitor() {
     if (!localResult.ok) write("HTTP: " + localResult.reason);
     if (tunnelState.url) {
       const publicResult = await health(tunnelState.url + "/api/health");
+      if (activeIdentity) {
+        const match = await endpointIdentity(tunnelState.url, activeIdentity);
+        if (!match.ok) write(match.reason);
+      }
       if (!publicResult.ok) {
         write("Публичный health: " + publicResult.reason);
         write(
@@ -429,9 +440,23 @@ async function monitor() {
 }
 async function componentStatus() {
   try {
-    const response = await fetch(local() + "/api/status", {
-      signal: AbortSignal.timeout(3000),
-    });
+    const response = await fetch(
+      local() + (env.DIAGNOSTICS_TOKEN ? "/api/diagnostics" : "/api/status"),
+      {
+        headers: env.DIAGNOSTICS_TOKEN
+          ? { Authorization: "Bearer " + env.DIAGNOSTICS_TOKEN }
+          : {},
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (!response.ok) {
+      write(
+        env.DIAGNOSTICS_TOKEN
+          ? "Защищённая диагностика недоступна; проверьте DIAGNOSTICS_TOKEN локально."
+          : "Статус HTTP недоступен.",
+      );
+      return;
+    }
     const s = await response.json();
     write(
       `HTTP: ${s.http}; SQLite: ${s.database}; бот: ${s.telegram?.bot}; Telegram API: ${s.telegram?.api}; proxy: ${s.telegram?.proxy}; меню: ${s.telegram?.setup ?? "unknown"}`,
@@ -446,6 +471,17 @@ async function diagnostics() {
   write(
     "Диагностика не выполняет Telegram API-запросы и не запускает polling.",
   );
+  if (env.RUN_TARGET === "remote") {
+    const check = await endpointIdentity(env.APP_URL, env.DEPLOYMENT_ID);
+    write(
+      check.ok ? "Удалённый endpoint и deployment совпадают." : check.reason,
+    );
+    if (check.ok)
+      write(
+        `HTTP=${check.status.http}; SQLite=${check.status.database}; bot=${check.status.telegram?.bot}; API=${check.status.telegram?.api}; menu=${check.status.telegram?.menu}`,
+      );
+    return;
+  }
   const processes = await processList();
   write(
     `cloudflared PID: ${
@@ -498,6 +534,10 @@ async function diagnostics() {
     try {
       const url = validateAppUrl(env.APP_URL);
       const p = await health(url + "/api/health");
+      if (env.DEPLOYMENT_ID) {
+        const match = await endpointIdentity(url, env.DEPLOYMENT_ID);
+        write(match.ok ? "APP_URL deployment совпадает." : match.reason);
+      }
       write("HTTP public: " + (p.ok ? "ok" : p.reason));
       if (p.status === 502)
         write(
@@ -512,6 +552,56 @@ async function diagnostics() {
   } else write("APP_URL не задан.");
   write(`Отчёт без токенов/паролей: ${logPath}`);
 }
+async function remoteMonitor() {
+  const url = validateAppUrl(env.APP_URL);
+  const first = await endpointIdentity(url, env.DEPLOYMENT_ID);
+  if (!first.ok) throw new LauncherError(first.reason);
+  write(
+    "Постоянный удалённый endpoint подтверждён. Backend, SQLite и бот управляются systemd на сервере; локальные копии не запускаются.",
+  );
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  rl.on("line", (line) => {
+    if (line.trim().toLowerCase() === "q")
+      void shutdown().then(() => process.exit(0));
+  });
+  write("q + Enter — закрыть монитор. Удалённый сервер продолжит работу.");
+  while (!stopping) {
+    const result = await endpointIdentity(url, env.DEPLOYMENT_ID);
+    if (result.ok)
+      write(
+        `REMOTE HTTP=${result.status.http}; DB=${result.status.database}; bot=${result.status.telegram?.bot}; API=${result.status.telegram?.api}; menu=${result.status.telegram?.menu}`,
+      );
+    else write(result.reason);
+    await delay(15000);
+  }
+  rl.close();
+}
+async function startExternal() {
+  const url = validateAppUrl(env.APP_URL);
+
+  if (!(await freePort(port())))
+    throw new LauncherError(
+      "HTTP-порт занят. Закройте прежний запуск SlopeMate.",
+    );
+  httpChild = startHttp(false);
+  await waitHealth(local() + "/api/health", httpChild);
+  const localStatus = await (
+    await fetch(local() + "/api/status", { signal: AbortSignal.timeout(5000) })
+  ).json();
+  activeIdentity = env.DEPLOYMENT_ID || localStatus.deploymentId;
+  const verification = await endpointIdentity(url, activeIdentity);
+  if (!verification.ok) throw new LauncherError(verification.reason);
+  await stopChild(httpChild);
+  httpChild = startHttp(true);
+  await waitHealth(local() + "/api/health", httpChild);
+  await waitHealth(url + "/api/health", httpChild);
+  tunnelState.url = url;
+  await componentStatus();
+  await monitor();
+}
 async function main(action) {
   if (fs.existsSync(envPath)) load();
   nodeCheck();
@@ -519,6 +609,14 @@ async function main(action) {
     await result(npm(["ci"], { tag: "npm" }));
     if (!fs.existsSync(envPath))
       fs.copyFileSync(".env.example", envPath, fs.constants.COPYFILE_EXCL);
+    const generated = prepareLocalDiagnostics(envPath);
+    load();
+    if (generated.length)
+      write(
+        "Подготовлены локальные " +
+          generated.join(", ") +
+          "; значения сохранены только в .env.",
+      );
     await result(npm(["run", "build"], { tag: "build" }));
     write("Установка завершена. Отредактируйте .env через 05_EDIT_ENV.bat.");
     return;
@@ -538,6 +636,10 @@ async function main(action) {
     throw new LauncherError("Неизвестный режим launcher.");
   release = lockFile(path.join(logs, "launcher.lock"));
   if (action === "local") {
+    if (port() !== 3001)
+      throw new LauncherError(
+        "Локальный Vite настроен на API 3001. Для 02_LOCAL задайте PORT=3001.",
+      );
     if (!(await freePort(port())) || !(await freePort(5173)))
       throw new LauncherError(
         "Порт HTTP или 5173 уже занят. Закройте прежний запуск; чужие процессы не останавливаем.",
@@ -549,6 +651,10 @@ async function main(action) {
         DEV_AUTH: "true",
         BOT_TOKEN: "",
         BOT_ENABLED: "false",
+        APP_URL: "",
+        DEPLOYMENT_ID: "",
+        DIAGNOSTICS_TOKEN: "",
+        TELEGRAM_PROXY_URL: "",
         HOST: "127.0.0.1",
       },
     });
@@ -559,6 +665,10 @@ async function main(action) {
     await monitor();
     return;
   }
+  if (action === "telegram" && env.RUN_TARGET === "remote") {
+    await remoteMonitor();
+    return;
+  }
   assertPublicEnv(env);
   if (!fs.existsSync("dist/backend/src/index.js"))
     throw new LauncherError(
@@ -567,7 +677,22 @@ async function main(action) {
   const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
   if (proxy.configured && !proxy.tcp)
     write(
-      "Прокси TCP недоступен. HTTP и туннель продолжат запуск; Telegram выполнит ограниченные повторы. Запустите Karing SOCKS и проверьте порт; TUN не обязателен.",
+      "Прокси TCP недоступен. HTTP продолжит запуск; Telegram автоматически повторит соединение с охлаждением. Запустите Karing SOCKS и проверьте порт; TUN не обязателен.",
+    );
+  if (
+    action === "telegram" &&
+    (env.PUBLIC_ENDPOINT_MODE || "external") === "external"
+  ) {
+    await startExternal();
+    return;
+  }
+  if (action === "telegram" && env.PUBLIC_ENDPOINT_MODE !== "quick-test")
+    throw new LauncherError(
+      "Выберите PUBLIC_ENDPOINT_MODE=external (постоянный адрес) либо quick-test только для тестов.",
+    );
+  if (action === "telegram")
+    write(
+      "ВНИМАНИЕ: quick-test — временный Cloudflare, не режим постоянной эксплуатации.",
     );
   if (action === "telegram") {
     cloudflareCommand();
@@ -611,7 +736,7 @@ async function menu() {
     output: process.stdout,
   });
   write(
-    "\nSlopeMate — запуск Windows\n1. Установить зависимости и собрать\n2. Локальное приложение (без публикации)\n3. Только туннель к приватному серверу\n4. Запустить Telegram Mini App (все компоненты)\n5. Редактировать .env\n6. Проверки и сборка\n7. Диагностика\n0. Выход",
+    "\nSlopeMate — запуск Windows\n1. Установить зависимости и собрать\n2. Локальное приложение (без публикации)\n3. Временный туннель (только тестирование)\n4. Telegram: постоянный endpoint / сервер\n5. Редактировать .env\n6. Проверки и сборка\n7. Диагностика\n0. Выход",
   );
   const answer = await rl.question("Выберите пункт: ");
   rl.close();

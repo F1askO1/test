@@ -1,5 +1,22 @@
 # Результаты проверки 5 ноября 2026
 
+## Актуальная проверка стабилизации
+
+Работа от main после merge PR #2, ветка `fix/stable-deployment`.
+
+- `npm ci --no-audit --no-fund`: успешно, lockfile воспроизводим.
+- `npm run check`, `npm run build`: успешно.
+- `npm test`: **44 passed**, 0 failed, 0 skipped. Новые проверки воспроизводят старый socket idle reset на локальном TLS/SOCKS, подтверждают исправленный idle poll и отказ недоверенному сертификату, handshake timeout, восстановление после >6 сбоев и двух циклов ECONNRESET, jitter/cooldown, menu mismatch/repair, приватную диагностику, identity после рестарта, exclusive token lock, классификацию API/авторизации/SQLite, безопасное создание env без перезаписи.
+- Playwright / системный Chromium: **3 passed**, 0 failed. Существующие мобильные сценарии GPS, GPX, профиля и истории сохранены. Эмуляция не является физическим iPhone.
+- `npm audit --omit=dev --audit-level=high`: **0 vulnerabilities** в проверенных production-зависимостях.
+- Bash/Node syntax checks install/launcher/soak скриптов прошли. Linux VPS installer, Caddy и systemd фактически не развёрнуты; приёмка конфигурации на целевом сервере остаётся необходимой.
+- Схема SQLite, анализ треков, GPS hook, CSS и функциональные экраны не менялись. Backend теперь правильно возвращает 500 при ошибке БД вместо ложного 401. Frontend transport изменён только для различения ошибок.
+- `.env`, SQLite, node_modules, logs и dist исключены из коммита. Тестовые сертификаты и ключи создаются в памяти; настоящий Telegram Bot Token не использован.
+
+**Не подтверждено:** реальный Windows/Karing, iPhone, выбранный VPS/домен/DNS, Caddy certificate issuance, настоящий Telegram и непрерывная работа >60 минут. Эти критерии нельзя объявлять выполненными по локальным tests. `npm run soak` и STABILITY_ACCEPTANCE_RU.md подготовлены для 90-минутной реальной приёмки, но длительный прогон агентом не запускался.
+
+Подтверждённые дефекты и внешние гипотезы: AUDIT_STABILITY_RU.md. Постоянное размещение: DEPLOYMENT_RU.md. Никакие платные ресурсы, аккаунты, DNS или системные маршруты пользователя автоматически не создавались/не менялись. Исторические результаты предыдущих итераций приведены ниже.
+
 Выполнено в текущей Linux cloud-среде, Node.js 24.22.1:
 
 - `npm ci --no-audit --no-fund`: воспроизводимая установка по lockfile прошла.

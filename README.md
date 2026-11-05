@@ -4,13 +4,17 @@ Telegram Mini App для сноубордистов и лыжников: GPS-з�
 
 Это исходный код первого MVP, а не опубликованный Telegram-бот. Браузерный режим можно запустить сразу. Для настоящего Telegram нужны ваш бот, его токен и HTTPS-адрес. Токен не отправляйте в чат и не добавляйте в Git. Проверки на физическом iPhone и в вашем Telegram требуют ручного выполнения.
 
-## Запуск на Windows двойным щелчком
+## Постоянная эксплуатация и запуск
 
-Для Node.js 24 и Windows 10 добавлен `SlopeMate.bat` с русским меню. Первый запуск: `01_INSTALL.bat` → `05_EDIT_ENV.bat` (ваш токен, `DEV_AUTH=false`, реальный SOCKS-порт Karing) → `04_TELEGRAM.bat`. Полный launcher сам запускает приватный HTTP, проверяет Quick Tunnel, обновляет только `APP_URL` и запускает бота через локальный SOCKS-прокси. Глобальный TUN для бота больше не требуется, если локальный прокси действительно достигает Telegram.
+Для production рекомендуется **один VPS + постоянный домен + Caddy HTTPS + systemd**, с прежней SQLite на постоянном диске. Windows/Karing и бесплатный часовой Pinggy больше не являются обязательной частью production-пути. Готовые файлы — `deploy/`, инструкция — **[DEPLOYMENT_RU.md](docs/DEPLOYMENT_RU.md)**. Сервер/домен нужно предоставить и настроить: они не были куплены или развёрнуты агентом.
 
-Подробная инструкция, 502/1033, Karing, логи и остановка: **[docs/WINDOWS_NETWORK_SETUP_RU.md](docs/WINDOWS_NETWORK_SETUP_RU.md)**. `07_DIAGNOSTICS.bat` не запускает второго бота. Прямой запуск через npm ниже остаётся доступен; не запускайте его одновременно с полным launcher.
+На Windows используйте `SlopeMate.bat` → пункт 4. Режим `RUN_TARGET=remote` проверяет готовый VPS, не запуская второго бота; `RUN_TARGET=local` с `PUBLIC_ENDPOINT_MODE=external` запускает локальный backend за уже настроенным постоянным HTTPS endpoint. По умолчанию launcher больше не создаёт Quick Tunnel. `PUBLIC_ENDPOINT_MODE=quick-test` сохранён только для явного временного тестирования.
 
-HTTP теперь работает независимо от Telegram API. `/api/health` — доступность HTTP; `/api/status` — безопасные статусы HTTP/SQLite/бота/API/прокси без личных данных. При `BOT_ENABLED=false` polling выключен, но production-авторизация по токену сохранена. Ошибки меню/сети не закрывают Express; повторные попытки ограничены, после исчерпания бот требует явного перезапуска.
+Первый запуск: `01_INSTALL.bat`, затем `05_EDIT_ENV.bat` для однократной настройки. Подробности Karing (`socks5h://127.0.0.1:3066` в текущем окружении пользователя), безопасной диагностики, тайм-аутов и остановки — **[WINDOWS_NETWORK_SETUP_RU.md](docs/WINDOWS_NETWORK_SETUP_RU.md)**.
+
+`/api/health` проверяет HTTP, `/api/status` даёт безопасную сводку и deployment identity, `/api/diagnostics` требует отдельный bearer DIAGNOSTICS_TOKEN для подробностей восстановления. Проверка initData и приватность не ослаблены. Transient-ошибки Telegram восстанавливаются с jitter/cooldown, а не останавливаются после шести неудач. Токен/конфигурация/webhook/дублированный poller требуют вмешательства.
+
+Подтверждённые дефекты и внешние гипотезы: [AUDIT_STABILITY_RU.md](docs/AUDIT_STABILITY_RU.md). Перед объявлением готовности выполните [приёмку минимум 90 минут](docs/STABILITY_ACCEPTANCE_RU.md), в том числе iPhone и несколько циклов восстановления. Локальные тесты не доказывают устойчивость настоящих Karing/Telegram/Cloudflare.
 
 ## Что реализовано
 
@@ -88,9 +92,9 @@ NODE_ENV=production
 
 Можно также настроить Main Mini App через `/mybots` → ваш бот → Bot Settings → Configure Mini App (названия пунктов могут меняться). Для ручной настройки меню используйте `/setmenubutton` и тот же HTTPS URL. `/setdomain` относится к другим механизмам авторизации и не заменяет проверку initData.
 
-## Временный HTTPS для Telegram
+## Временный HTTPS для разработки (не production)
 
-Нужен публичный HTTPS-адрес, который ведёт на локальный **production-сервер** с frontend и API. Например, установите официальный `cloudflared` (отдельная утилита, в проект не входит), затем:
+Для постоянной работы следуйте DEPLOYMENT_RU.md. Следующий пример оставлен только для временной проверки. Нужен публичный HTTPS-адрес, который ведёт на локальный **production-сервер** с frontend и API. Например, установите официальный `cloudflared` (отдельная утилита, в проект не входит), затем:
 
 ```powershell
 npm run build
@@ -112,20 +116,25 @@ Quick Tunnel временный, без гарантии доступности;
 
 ## Конфигурация
 
-| Переменная                                  | Назначение                                                                                                    |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `NODE_ENV`                                  | `development` или `production`                                                                                |
-| `DEV_AUTH`                                  | Только локально `true`; в production приложение откажется стартовать с этим значением                         |
-| `BOT_TOKEN`                                 | Секрет BotFather, обязателен для Telegram и production                                                        |
-| `APP_URL`                                   | Публичный HTTPS URL Mini App; обязателен при наличии токена                                                   |
-| `DATABASE_PATH`                             | По умолчанию `./data/slopemate.sqlite`; относительно корня запуска                                            |
-| `PORT`, `HOST`                              | По умолчанию `3001`, `127.0.0.1`                                                                              |
-| `CORS_ORIGINS`                              | Точные разрешённые origins через запятую; при одном origin в production можно оставить пустым                 |
-| `TELEGRAM_PROXY_URL`                        | Необязательный `socks5://host:port` или `socks5h://host:port` только для всех запросов grammY; порт из Karing |
-| `BOT_ENABLED`                               | `false` отключает polling, не ослабляя авторизацию HTTP                                                       |
-| `CLOUDFLARED_PATH`                          | Необязательный полный путь к cloudflared для Windows launcher                                                 |
-| `TUNNEL_PROTOCOL`, `TUNNEL_EDGE_IP_VERSION` | Начальные значения `http2`, `4`; это не универсальное исправление сети                                        |
-| `TRUST_PROXY`                               | Число доверенных reverse proxy, по умолчанию `0`                                                              |
+| Переменная                                                                                         | Назначение                                                                                                    |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                                                                                         | `development` или `production`                                                                                |
+| `DEV_AUTH`                                                                                         | Только локально `true`; в production приложение откажется стартовать с этим значением                         |
+| `BOT_TOKEN`                                                                                        | Секрет BotFather, обязателен для Telegram и production                                                        |
+| `APP_URL`                                                                                          | Публичный HTTPS URL Mini App; обязателен при наличии токена                                                   |
+| `DATABASE_PATH`                                                                                    | По умолчанию `./data/slopemate.sqlite`; относительно корня запуска                                            |
+| `PORT`, `HOST`                                                                                     | По умолчанию `3001`, `127.0.0.1`                                                                              |
+| `CORS_ORIGINS`                                                                                     | Точные разрешённые origins через запятую; при одном origin в production можно оставить пустым                 |
+| `TELEGRAM_PROXY_URL`                                                                               | Необязательный `socks5://host:port` или `socks5h://host:port` только для всех запросов grammY; порт из Karing |
+| `BOT_ENABLED`                                                                                      | `false` отключает polling, не ослабляя авторизацию HTTP                                                       |
+| `CLOUDFLARED_PATH`                                                                                 | Необязательный полный путь к cloudflared для Windows launcher                                                 |
+| `TUNNEL_PROTOCOL`, `TUNNEL_EDGE_IP_VERSION`                                                        | Начальные значения `http2`, `4`; это не универсальное исправление сети                                        |
+| `RUN_TARGET`                                                                                       | `local` — Windows-хост; `remote` — только наблюдение готового VPS                                             |
+| `PUBLIC_ENDPOINT_MODE`                                                                             | `external` — постоянный настроенный HTTPS; `quick-test` — только временный тест                               |
+| `DEPLOYMENT_ID`                                                                                    | Постоянный публичный идентификатор для проверки нужного deployment                                            |
+| `DIAGNOSTICS_TOKEN`                                                                                | Секретный bearer только для подробного `/api/diagnostics`; не Telegram-токен                                  |
+| `TELEGRAM_CONNECT_TIMEOUT_MS`, `TELEGRAM_REQUEST_TIMEOUT_SECONDS`, `TELEGRAM_POLL_TIMEOUT_SECONDS` | SOCKS handshake / общий RPC deadline / ожидание updates; допустимые соотношения проверяются сервером          |
+| `TRUST_PROXY`                                                                                      | Число доверенных reverse proxy, по умолчанию `0`                                                              |
 
 В production проверяется только подписанный Telegram-пользователь. Локальная авторизация не включается автоматически. Не задавайте секреты в переменных `VITE_*`: они попадут в браузерную сборку.
 

@@ -1,0 +1,7 @@
+# Replace this documentation domain with the APP_URL hostname.
+# DNS A/AAAA must point at this server. Open inbound TCP 80 and 443.
+app.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:3001
+    # No access log: do not record user request payloads or Authorization.
+}

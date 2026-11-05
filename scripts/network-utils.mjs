@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import net from "node:net";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { parse } from "dotenv";
 export class LauncherError extends Error {}
 export function redact(text, secrets = []) {
@@ -213,4 +213,75 @@ export async function proxyCheck(raw) {
     configured: true,
     tcp: await tcp(u.hostname.replace(/^\[|\]$/g, ""), Number(u.port)),
   };
+}
+export async function endpointIdentity(
+  origin,
+  expected,
+  { fetchFn = fetch } = {},
+) {
+  try {
+    const url = validateAppUrl(origin);
+    if (!expected || !/^[A-Za-z0-9_-]{8,80}$/.test(expected))
+      return {
+        ok: false,
+        reason:
+          "DEPLOYMENT_ID не задан или неверен: нельзя подтвердить принадлежность endpoint.",
+      };
+    const r = await fetchFn(url + "/api/status", {
+      redirect: "error",
+      signal: AbortSignal.timeout(8000),
+      headers: { "Cache-Control": "no-cache" },
+    });
+    if (!r.ok)
+      return {
+        ok: false,
+        reason: classifyCloudflare(r.status, await r.text()),
+      };
+    const s = await r.json();
+    return {
+      ok:
+        s.http === "ready" &&
+        s.database === "ready" &&
+        s.mode === "production-private" &&
+        s.deploymentId === expected,
+      reason:
+        s.deploymentId === expected
+          ? "Проверьте HTTP/SQLite/private mode"
+          : "Адрес устарел или ведёт к другому deployment (identity mismatch).",
+      status: s,
+    };
+  } catch (e) {
+    return { ok: false, reason: "Endpoint: " + errorCode(e) };
+  }
+}
+export function prepareLocalDiagnostics(file) {
+  const env = readEnv(file);
+  if (env.RUN_TARGET === "remote") return [];
+  const additions = [];
+  if (!env.DEPLOYMENT_ID) additions.push(["DEPLOYMENT_ID", randomUUID()]);
+  if (!env.DIAGNOSTICS_TOKEN)
+    additions.push(["DIAGNOSTICS_TOKEN", randomBytes(32).toString("hex")]);
+  if (!additions.length) return [];
+  const original = fs.readFileSync(file, "utf8"),
+    newline = original.includes("\r\n") ? "\r\n" : "\n";
+  let text = original;
+  for (const [key, value] of additions) {
+    const matcher = new RegExp("^\\s*(?:export\\s+)?" + key + "\\s*=");
+    text = text
+      .split(/\r?\n/)
+      .filter((line) => !matcher.test(line))
+      .join(newline);
+    if (!text.endsWith(newline)) text += newline;
+    text += key + "=" + value + newline;
+  }
+  const temp = file + ".launcher-" + randomUUID() + ".tmp";
+  let created = false;
+  try {
+    fs.writeFileSync(temp, text, { flag: "wx", mode: 0o600 });
+    created = true;
+    fs.renameSync(temp, file);
+  } finally {
+    if (created && fs.existsSync(temp)) fs.unlinkSync(temp);
+  }
+  return additions.map(([key]) => key);
 }
