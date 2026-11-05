@@ -1,0 +1,655 @@
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+import { spawn, execFileSync } from "node:child_process";
+import readline from "node:readline/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  LauncherError,
+  redact,
+  errorCode,
+  readEnv,
+  assertPublicEnv,
+  validateAppUrl,
+  saveAppUrl,
+  health,
+  freePort,
+  proxyCheck,
+  parseTunnelLine,
+  lockFile,
+} from "./network-utils.mjs";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+process.chdir(root);
+const mode = process.argv[2] ?? "menu",
+  envPath = path.join(root, ".env"),
+  logs = path.join(root, "logs");
+fs.mkdirSync(logs, { recursive: true });
+let env = {},
+  secrets = [],
+  release,
+  stopping = false,
+  tunnelState = { registered: false, url: "", pid: 0 },
+  httpChild;
+const children = new Set(),
+  stamp = new Date().toISOString().replace(/[:.]/g, "-"),
+  logPath = path.join(logs, `launcher-${stamp}.log`);
+function write(message) {
+  const safe = redact(message, [...secrets, root, os.homedir()]);
+  console.log(safe);
+  fs.appendFileSync(logPath, safe + "\n", { mode: 0o600 });
+}
+function load() {
+  if (!fs.existsSync(envPath))
+    throw new LauncherError(
+      "Нет .env. Сначала запустите 01_INSTALL.bat, затем 05_EDIT_ENV.bat.",
+    );
+  env = readEnv(envPath);
+  secrets = [env.BOT_TOKEN, env.TELEGRAM_PROXY_URL];
+  if (env.TELEGRAM_PROXY_URL) {
+    try {
+      const u = new URL(env.TELEGRAM_PROXY_URL);
+      secrets.push(
+        decodeURIComponent(u.password),
+        decodeURIComponent(u.username),
+      );
+    } catch {}
+  }
+}
+function npmCli() {
+  const candidates = [
+    path.join(
+      path.dirname(process.execPath),
+      "node_modules/npm/bin/npm-cli.js",
+    ),
+    path.resolve(
+      path.dirname(process.execPath),
+      "../lib/node_modules/npm/bin/npm-cli.js",
+    ),
+  ];
+  const cli = candidates.find((p) => fs.existsSync(p));
+  if (!cli)
+    throw new LauncherError(
+      "npm CLI не найден рядом с Node.js. Установите Node.js 24 LTS с npm.",
+    );
+  return cli;
+}
+function nodeCheck() {
+  if (Number(process.versions.node.split(".")[0]) !== 24)
+    throw new LauncherError("Установите Node.js 24 LTS.");
+  try {
+    const version = execFileSync(process.execPath, [npmCli(), "--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    write(`Node ${process.versions.node}; npm ${version}`);
+  } catch {
+    throw new LauncherError(
+      "npm не найден рядом с Node.js. Переустановите Node.js 24 LTS с npm.",
+    );
+  }
+}
+function npm(args, extra = {}) {
+  const cli = npmCli();
+  return child(process.execPath, [cli, ...args], extra);
+}
+function capture(p, tag, onLine = () => {}) {
+  for (const stream of [p.stdout, p.stderr]) {
+    let buffer = "";
+    stream?.setEncoding("utf8");
+    stream?.on("data", (chunk) => {
+      buffer += chunk;
+      if (buffer.length > 65536 && !buffer.includes("\n")) {
+        buffer = "";
+        write(`[${tag}] oversized log line omitted`);
+        return;
+      }
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (line) {
+          onLine(line);
+          write(`[${tag}] ${line}`);
+        }
+      }
+    });
+    stream?.on("end", () => {
+      if (buffer) {
+        onLine(buffer);
+        write(`[${tag}] ${buffer}`);
+      }
+    });
+  }
+}
+function child(
+  command,
+  args,
+  { vars = {}, tag = "process", onLine = () => {}, ipc = false } = {},
+) {
+  const options = {
+    cwd: root,
+    env: { ...process.env, ...env, ...vars, DEBUG: "", NODE_DEBUG: "" },
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe", ...(ipc ? ["ipc"] : [])],
+  };
+  const p = spawn(command, args, options);
+  children.add(p);
+  p.on("error", (e) => write(`[${tag}] ${errorCode(e)}`));
+  p.on("exit", (code, signal) => {
+    children.delete(p);
+    write(`[${tag}] PID ${p.pid} завершён; code=${code ?? signal}`);
+  });
+  capture(p, tag, onLine);
+  write(`[${tag}] PID ${p.pid ?? "not started"}`);
+  return p;
+}
+function result(p) {
+  return new Promise((resolve, reject) => {
+    p.once("error", () => reject(new Error("Не удалось запустить процесс.")));
+    p.once("exit", (code) =>
+      code === 0
+        ? resolve()
+        : reject(
+            new Error("Команда завершилась с ошибкой; см. безопасный лог."),
+          ),
+    );
+  });
+}
+async function stopChild(p) {
+  if (!p || p.exitCode !== null || p.signalCode || !children.has(p)) return;
+  const exited = new Promise((resolve) => p.once("exit", resolve));
+  if (p.connected) p.send("shutdown", () => {});
+  else if (process.platform === "win32") {
+    await new Promise((resolve) => {
+      const k = spawn("taskkill.exe", ["/PID", String(p.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      k.once("error", resolve);
+      k.once("exit", resolve);
+    });
+  } else p.kill("SIGTERM");
+  await Promise.race([exited, delay(7000, undefined, { ref: false })]);
+  if (children.has(p) && p.exitCode === null) {
+    // Only a child still owned by this live launcher; never enumerate-and-kill unrelated cloudflared/node.
+    if (process.platform === "win32") {
+      await new Promise((resolve) => {
+        const k = spawn("taskkill.exe", ["/PID", String(p.pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+        k.once("error", resolve);
+        k.once("exit", resolve);
+      });
+    } else p.kill("SIGKILL");
+    await Promise.race([exited, delay(2000, undefined, { ref: false })]);
+  }
+}
+let shutdownTask;
+function shutdown() {
+  if (shutdownTask) return shutdownTask;
+  shutdownTask = shutdownOwned();
+  return shutdownTask;
+}
+async function shutdownOwned() {
+  stopping = true;
+  write("Останавливаем только процессы этого launcher…");
+  for (const p of [...children].reverse()) await stopChild(p);
+  release?.();
+}
+for (const signal of ["SIGINT", "SIGTERM"])
+  process.on(signal, () => {
+    void shutdown().then(() => process.exit(0));
+  });
+async function processList() {
+  if (process.platform !== "win32") return [];
+  try {
+    const raw = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "@(Get-CimInstance Win32_Process -Filter \"name LIKE 'cloudflared%.exe' OR name='node.exe'\" | ForEach-Object { [pscustomobject]@{ pid=$_.ProcessId; name=$_.Name; known=($null -ne $_.CommandLine); slopemate=($_.CommandLine -match '3001|SlopeMate|dist[\\/]backend[\\/]src[\\/]index.js') } }) | ConvertTo-Json -Compress".replace(
+          "3001|SlopeMate",
+          String(port()) + "|SlopeMate",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    throw new LauncherError(
+      "Не удалось проверить процессы Windows через CIM. Запуск отменён: проверьте PowerShell/права.",
+    );
+  }
+}
+async function conflicts() {
+  const processes = await processList();
+  const tunnels = processes.filter((p) => /^cloudflared.*\.exe$/i.test(p.name));
+  if (tunnels.length) {
+    write(
+      `Найдены cloudflared PID: ${tunnels.map((p) => p.pid).join(", ")}. Их логи и метрики относятся к отдельным процессам. Чужие процессы не останавливаем.`,
+    );
+    if (tunnels.some((p) => !p.known))
+      throw new LauncherError(
+        "Не удалось прочитать принадлежность cloudflared. Проверьте процессы вручную; новый туннель не запущен.",
+      );
+    if (tunnels.some((p) => p.slopemate))
+      throw new LauncherError(
+        "Уже найден cloudflared, связанный с портом SlopeMate. Закройте его исходное окно и повторите.",
+      );
+  }
+}
+function cloudflareCommand() {
+  const executable = env.CLOUDFLARED_PATH || "cloudflared.exe";
+  try {
+    execFileSync(executable, ["--version"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+  } catch {
+    throw new LauncherError(
+      "cloudflared не найден. Установите официальную утилиту или задайте CLOUDFLARED_PATH в .env.",
+    );
+  }
+  return executable;
+}
+function port() {
+  const n = Number(env.PORT || 3001);
+  if (!Number.isInteger(n) || n < 1 || n > 65535)
+    throw new LauncherError("PORT: неверный номер.");
+  return n;
+}
+function local() {
+  return `http://127.0.0.1:${port()}`;
+}
+async function waitHealth(url, p, timeout = 25000) {
+  const end = Date.now() + timeout;
+  let observation;
+  while (Date.now() < end && !stopping) {
+    if (p && (p.exitCode !== null || p.signalCode))
+      throw new LauncherError("Процесс HTTP завершился до готовности.");
+    observation = await health(url, { timeout: 3000 });
+    if (observation.ok) return;
+    await delay(1000);
+  }
+  throw new LauncherError(`HTTP не готов: ${observation?.reason ?? "timeout"}`);
+}
+function startHttp(botEnabled) {
+  return child(process.execPath, ["dist/backend/src/index.js"], {
+    ipc: true,
+    tag: "http",
+    vars: {
+      NODE_ENV: "production",
+      DEV_AUTH: "false",
+      HOST: "127.0.0.1",
+      BOT_ENABLED: String(botEnabled),
+      DEBUG: "",
+      NODE_DEBUG: "",
+    },
+  });
+}
+async function startTunnel() {
+  const exe = cloudflareCommand();
+  await conflicts();
+  const localHealth = await health(local() + "/api/health");
+  if (!localHealth.ok)
+    throw new LauncherError(
+      "Локальный /api/health недоступен. Туннель не запущен.",
+    );
+  const protocol = env.TUNNEL_PROTOCOL || "http2",
+    ip = env.TUNNEL_EDGE_IP_VERSION || "4";
+  if (
+    !["http2", "quic", "auto"].includes(protocol) ||
+    !["4", "6", "auto"].includes(ip)
+  )
+    throw new LauncherError(
+      "Неверные TUNNEL_PROTOCOL / TUNNEL_EDGE_IP_VERSION.",
+    );
+  // Only cloudflared goes direct, irrespective of inherited HTTP proxy settings. Does not bypass OS TUN/routes.
+  const direct = {};
+  for (const name of [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+  ])
+    direct[name] = "";
+  const p = child(
+    exe,
+    [
+      "tunnel",
+      "--protocol",
+      protocol,
+      "--edge-ip-version",
+      ip,
+      "--url",
+      local(),
+      "--metrics",
+      "127.0.0.1:0",
+      "--no-autoupdate",
+    ],
+    {
+      tag: "cloudflared",
+      vars: direct,
+      onLine: (line) => {
+        const event = parseTunnelLine(line);
+        if (event.url) tunnelState.url = event.url;
+        if (event.registered) tunnelState.registered = true;
+        if (event.disconnected) {
+          tunnelState.registered = false;
+          write(
+            "Cloudflare: наблюдается обрыв edge-соединения. Ожидаем проверку публичного health; новый URL автоматически не создаём.",
+          );
+        }
+      },
+    },
+  );
+  tunnelState.pid = p.pid;
+  const end = Date.now() + 90000;
+  while (Date.now() < end && !stopping) {
+    if (p.exitCode !== null || p.signalCode)
+      throw new LauncherError(
+        "cloudflared завершился до проверки доступности.",
+      );
+    if (tunnelState.url && tunnelState.registered) {
+      const first = await health(tunnelState.url + "/api/health");
+      if (first.ok) {
+        await delay(2000);
+        const second = await health(tunnelState.url + "/api/health");
+        if (second.ok) {
+          write(
+            `Quick Tunnel проверен двумя запросами: ${tunnelState.url}; PID ${p.pid}`,
+          );
+          fs.writeFileSync(
+            path.join(logs, "tunnel-state.json"),
+            JSON.stringify(
+              {
+                pid: p.pid,
+                launcherPid: process.pid,
+                url: tunnelState.url,
+                created: new Date().toISOString(),
+              },
+              null,
+              2,
+            ),
+          );
+          return p;
+        }
+      } else write(first.reason);
+    }
+    await delay(2000);
+  }
+  throw new LauncherError(
+    "Quick Tunnel не прошёл публичную проверку за 90 секунд. См. лог; проверьте сеть/TUN. URL сам по себе не доказывает доступность.",
+  );
+}
+async function monitor() {
+  write(
+    "Launcher остаётся открытым. Для остановки введите q и Enter или нажмите Ctrl+C.",
+  );
+  const input = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  input.on("line", (line) => {
+    if (line.trim().toLowerCase() === "q")
+      void shutdown().then(() => process.exit(0));
+  });
+  let ticks = 0;
+  while (!stopping) {
+    await delay(10000);
+    if (stopping) break;
+    const localResult = await health(local() + "/api/health");
+    if (!localResult.ok) write("HTTP: " + localResult.reason);
+    if (tunnelState.url) {
+      const publicResult = await health(tunnelState.url + "/api/health");
+      if (!publicResult.ok) {
+        write("Публичный health: " + publicResult.reason);
+        write(
+          `Локальный origin: ${localResult.ok ? "доступен" : "недоступен"}. Проверьте лог именно cloudflared PID ${tunnelState.pid}.`,
+        );
+      }
+    }
+    if (++ticks % 3 === 0) await componentStatus();
+    if (!children.size) {
+      write("Управляемые процессы завершились. Повторный запуск — вручную.");
+      break;
+    }
+  }
+  input.close();
+}
+async function componentStatus() {
+  try {
+    const response = await fetch(local() + "/api/status", {
+      signal: AbortSignal.timeout(3000),
+    });
+    const s = await response.json();
+    write(
+      `HTTP: ${s.http}; SQLite: ${s.database}; бот: ${s.telegram?.bot}; Telegram API: ${s.telegram?.api}; proxy: ${s.telegram?.proxy}; меню: ${s.telegram?.setup ?? "unknown"}`,
+    );
+  } catch {
+    write("Статусы компонентов недоступны.");
+  }
+}
+async function diagnostics() {
+  nodeCheck();
+  load();
+  write(
+    "Диагностика не выполняет Telegram API-запросы и не запускает polling.",
+  );
+  const processes = await processList();
+  write(
+    `cloudflared PID: ${
+      processes
+        .filter((p) => /^cloudflared.*\.exe$/i.test(p.name))
+        .map((p) => p.pid)
+        .join(", ") || "нет/не Windows"
+    }`,
+  );
+  write(
+    `Связанные node PID (эвристика CommandLine): ${
+      processes
+        .filter((p) => p.name === "node.exe" && p.slopemate)
+        .map((p) => p.pid)
+        .join(", ") || "нет/не Windows"
+    }`,
+  );
+  const lockPath = path.join(logs, "launcher.lock");
+  if (fs.existsSync(lockPath)) {
+    try {
+      const pid = JSON.parse(fs.readFileSync(lockPath, "utf8")).pid;
+      write(
+        `Lock launcher PID: ${Number.isInteger(pid) ? pid : "некорректный"}. Диагностика не меняет lock.`,
+      );
+    } catch {
+      write("Lock launcher повреждён; проверьте исходное окно и PID вручную.");
+    }
+  }
+  if (processes.filter((p) => /^cloudflared.*\.exe$/i.test(p.name)).length > 1)
+    write(
+      "Несколько cloudflared: не связывайте метрики другого PID с этим туннелем.",
+    );
+  try {
+    cloudflareCommand();
+    write("cloudflared: найден");
+  } catch (e) {
+    write(e.message);
+  }
+  const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
+  write(
+    `Прокси: ${proxy.configured ? (proxy.tcp ? "TCP доступен (SOCKS/Telegram ещё не доказаны)" : "TCP недоступен") : "не задан, прямой Telegram API"}`,
+  );
+  write(
+    `Порт ${port()}: ${(await freePort(port())) ? "свободен" : "занят (проверьте владельца)"}`,
+  );
+  const h = await health(local() + "/api/health");
+  write("HTTP local: " + (h.ok ? "ok" : h.reason));
+  await componentStatus();
+  if (env.APP_URL) {
+    try {
+      const url = validateAppUrl(env.APP_URL);
+      const p = await health(url + "/api/health");
+      write("HTTP public: " + (p.ok ? "ok" : p.reason));
+      if (p.status === 502)
+        write(
+          "Origin сейчас " +
+            (h.ok
+              ? "доступен: проверьте адрес, PID и логи туннеля"
+              : "недоступен: сначала исправьте HTTP"),
+        );
+    } catch {
+      write("APP_URL: некорректный HTTPS origin");
+    }
+  } else write("APP_URL не задан.");
+  write(`Отчёт без токенов/паролей: ${logPath}`);
+}
+async function main(action) {
+  if (fs.existsSync(envPath)) load();
+  nodeCheck();
+  if (action === "install") {
+    await result(npm(["ci"], { tag: "npm" }));
+    if (!fs.existsSync(envPath))
+      fs.copyFileSync(".env.example", envPath, fs.constants.COPYFILE_EXCL);
+    await result(npm(["run", "build"], { tag: "build" }));
+    write("Установка завершена. Отредактируйте .env через 05_EDIT_ENV.bat.");
+    return;
+  }
+  load();
+  if (action === "diagnostics") {
+    await diagnostics();
+    return;
+  }
+  if (action === "tests") {
+    await result(npm(["run", "check"], { tag: "check" }));
+    await result(npm(["test"], { tag: "tests" }));
+    await result(npm(["run", "build"], { tag: "build" }));
+    return;
+  }
+  if (!["local", "telegram", "tunnel"].includes(action))
+    throw new LauncherError("Неизвестный режим launcher.");
+  release = lockFile(path.join(logs, "launcher.lock"));
+  if (action === "local") {
+    if (!(await freePort(port())) || !(await freePort(5173)))
+      throw new LauncherError(
+        "Порт HTTP или 5173 уже занят. Закройте прежний запуск; чужие процессы не останавливаем.",
+      );
+    const p = npm(["run", "dev"], {
+      tag: "dev",
+      vars: {
+        NODE_ENV: "development",
+        DEV_AUTH: "true",
+        BOT_TOKEN: "",
+        BOT_ENABLED: "false",
+        HOST: "127.0.0.1",
+      },
+    });
+    await waitHealth(local() + "/api/health", p);
+    write(
+      "Локальный режим: http://127.0.0.1:5173. Не публикуйте его через туннель.",
+    );
+    await monitor();
+    return;
+  }
+  assertPublicEnv(env);
+  if (!fs.existsSync("dist/backend/src/index.js"))
+    throw new LauncherError(
+      "Нет сборки. Выполните 01_INSTALL.bat или 06_TESTS.bat.",
+    );
+  const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
+  if (proxy.configured && !proxy.tcp)
+    write(
+      "Прокси TCP недоступен. HTTP и туннель продолжат запуск; Telegram выполнит ограниченные повторы. Запустите Karing SOCKS и проверьте порт; TUN не обязателен.",
+    );
+  if (action === "telegram") {
+    cloudflareCommand();
+    await conflicts();
+    if (!(await freePort(port())))
+      throw new LauncherError(
+        "HTTP-порт занят. Закройте прежний запуск SlopeMate; существующий сервер не захватываем.",
+      );
+    httpChild = startHttp(false);
+    await waitHealth(local() + "/api/health", httpChild);
+    await startTunnel();
+    saveAppUrl(envPath, tunnelState.url);
+    load();
+    write("APP_URL обновлён; остальные настройки .env сохранены.");
+    // Restart only our HTTP process, with the verified URL. No overlapping pollers.
+    await stopChild(httpChild);
+    httpChild = startHttp(true);
+    await waitHealth(local() + "/api/health", httpChild);
+    await waitHealth(tunnelState.url + "/api/health", httpChild, 30000);
+    await componentStatus();
+  } else {
+    // Manual tunnel is allowed only for a server declaring private production authentication.
+    const r = await fetch(local() + "/api/status", {
+      signal: AbortSignal.timeout(3000),
+    });
+    const s = await r.json();
+    if (s.mode !== "production-private")
+      throw new LauncherError(
+        "03_TUNNEL требует приватный production HTTP. Используйте 04_TELEGRAM для безопасного полного запуска.",
+      );
+    await startTunnel();
+    write(
+      "Ручной туннель: APP_URL и бот автоматически не обновляются. Для полного запуска используйте 04_TELEGRAM.bat.",
+    );
+  }
+  await monitor();
+}
+async function menu() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  write(
+    "\nSlopeMate — запуск Windows\n1. Установить зависимости и собрать\n2. Локальное приложение (без публикации)\n3. Только туннель к приватному серверу\n4. Запустить Telegram Mini App (все компоненты)\n5. Редактировать .env\n6. Проверки и сборка\n7. Диагностика\n0. Выход",
+  );
+  const answer = await rl.question("Выберите пункт: ");
+  rl.close();
+  const action = {
+    1: "install",
+    2: "local",
+    3: "tunnel",
+    4: "telegram",
+    6: "tests",
+    7: "diagnostics",
+  }[answer.trim()];
+  if (answer.trim() === "5") {
+    if (!fs.existsSync(envPath))
+      fs.copyFileSync(".env.example", envPath, fs.constants.COPYFILE_EXCL);
+    await new Promise((resolve) => {
+      const p = spawn("notepad.exe", [envPath], {
+        stdio: "ignore",
+        windowsHide: false,
+      });
+      p.once("error", resolve);
+      p.once("exit", resolve);
+    });
+    return;
+  }
+  if (answer.trim() === "0") return;
+  if (!action) throw new LauncherError("Выберите пункт 0–7.");
+  await main(action);
+}
+try {
+  if (mode === "menu") await menu();
+  else await main(mode);
+} catch (e) {
+  write(
+    e instanceof LauncherError
+      ? e.message
+      : `Ошибка запуска: ${errorCode(e)}. Проверьте .env и диагностический режим.`,
+  );
+  process.exitCode = 1;
+} finally {
+  await shutdown();
+}

@@ -23,6 +23,7 @@ export type Config = {
   token: string;
   origins: string[];
   trustProxy: number;
+  status?: () => unknown;
 };
 const point = z.object({
   lat: z.number().min(-90).max(90),
@@ -102,6 +103,25 @@ export function createApp(db: DB, config: Config) {
   );
   app.use(express.json({ limit: "12mb" }));
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  app.get("/api/status", (_req, res) => {
+    let database = "ready";
+    try {
+      db.prepare("SELECT 1").get();
+    } catch {
+      database = "unavailable";
+    }
+    res
+      .set("Cache-Control", "no-store")
+      .json({
+        http: "ready",
+        mode:
+          config.production && !config.devAuth
+            ? "production-private"
+            : "local-development",
+        database,
+        telegram: config.status?.() ?? { bot: "disabled", api: "unknown" },
+      });
+  });
   app.use("/api", (req, res, next) => {
     try {
       let user: TelegramUser;
