@@ -1,3 +1,6 @@
+import { Search, Layers, LocateFixed, Info, ChevronDown } from "lucide-react";
+import { MapSheet } from "./ski/MapSheet";
+import { skiLineStyle, skiHaloStyle, showStations } from "./ski/map-style";
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -39,6 +42,9 @@ export default function TrackMap({
     lastView = useRef("");
   const [tileFailed, setTileFailed] = useState(false),
     [layers, setLayers] = useState(false),
+    [chooser, setChooser] = useState(false),
+    [info, setInfo] = useState(false),
+    [zoom, setZoom] = useState(3),
     [pistes, setPistes] = useState(true),
     [lifts, setLifts] = useState(true),
     [myTrack, setMyTrack] = useState(true),
@@ -57,9 +63,24 @@ export default function TrackMap({
     const m = L.map(ref.current, {
       zoomControl: false,
       preferCanvas: true,
+      zoomSnap: 0.5,
     }).setView([61, 90], 3);
     map.current = m;
-    L.control.zoom({ position: "topright" }).addTo(m);
+    m.attributionControl.setPrefix(
+      '<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>',
+    );
+    m.createPane("ski-lifts").style.zIndex = "410";
+    m.createPane("ski-pistes").style.zIndex = "420";
+    m.createPane("ski-selection").style.zIndex = "430";
+    m.createPane("ski-track").style.zIndex = "440";
+    m.on("zoomend", () => setZoom(m.getZoom()));
+    L.control
+      .zoom({
+        position: "topright",
+        zoomInTitle: "Приблизить",
+        zoomOutTitle: "Отдалить",
+      })
+      .addTo(m);
     track.current = L.layerGroup().addTo(m);
     features.current = L.layerGroup().addTo(m);
     m.on("dragstart", () => setFollow(false));
@@ -115,44 +136,69 @@ export default function TrackMap({
           .addTo(g);
       return;
     }
-    for (const l of bundle.lines) {
-      if ((l.kind === "piste" && !pistes) || (l.kind === "lift" && !lifts))
-        continue;
-      const cs = l.coordinates.map(latlng);
-      if (l.kind === "piste")
-        L.polyline(cs, {
-          color: "#fff",
-          weight: 7,
-          opacity: 0.95,
-          interactive: false,
+    const visible = bundle.lines.filter(
+      (l) =>
+        !((l.kind === "piste" && !pistes) || (l.kind === "lift" && !lifts)),
+    );
+    const renderers = {
+      piste: L.canvas({ pane: "ski-pistes", padding: 0.2, tolerance: 7 }),
+      lift: L.canvas({ pane: "ski-lifts", padding: 0.2, tolerance: 7 }),
+      selection: L.canvas({
+        pane: "ski-selection",
+        padding: 0.2,
+        tolerance: 7,
+      }),
+    };
+    // Thin casing only for black/selected lines, drawn BEFORE colors. Never 7px halos on every segment.
+    for (const l of visible) {
+      const halo = skiHaloStyle(l, zoom);
+      if (halo)
+        L.polyline(l.coordinates.map(latlng), {
+          ...halo,
+          renderer: renderers[l.kind],
         }).addTo(g);
-      const path = L.polyline(cs, {
-        color: l.kind === "lift" ? "#32363d" : pisteColor(l.difficulty),
-        weight: l.kind === "lift" ? 3 : 4,
-        dashArray:
-          l.kind === "lift"
-            ? "7 5"
-            : l.difficulty === "expert" || l.difficulty === "freeride"
-              ? "4 4"
-              : undefined,
-      }).addTo(g);
-      path
-        .bindTooltip(textLabel(l.name), { sticky: true })
-        .on("click", () => setSelected(l));
-      if (l.kind === "lift")
-        for (const s of l.stations)
-          L.circleMarker(latlng(s.coordinate), {
-            radius: 4,
+    }
+    for (const l of visible) {
+      const cs = l.coordinates.map(latlng),
+        path = L.polyline(cs, {
+          ...skiLineStyle(l, zoom),
+          renderer: renderers[l.kind],
+        }).addTo(g);
+      path.bindTooltip(textLabel(l.name), { sticky: true }).on("click", () => {
+        setSelected(l);
+        setChooser(false);
+      });
+      if (l.kind === "lift" && showStations(zoom))
+        for (const station of l.stations)
+          L.circleMarker(latlng(station.coordinate), {
+            radius: 2.5,
             color: "#fff",
-            weight: 2,
-            fillColor: "#32363d",
+            weight: 1,
+            fillColor: "#414951",
             fillOpacity: 1,
+            renderer: renderers.lift,
           })
-            .bindTooltip(textLabel(s.name))
+            .bindTooltip(textLabel(station.name))
             .on("click", () => setSelected(l))
             .addTo(g);
     }
-  }, [bundle, catalog, pistes, lifts, ski?.select]);
+    if (selected && visible.some((l) => l.id === selected.id)) {
+      const cs = selected.coordinates.map(latlng),
+        halo = skiHaloStyle(selected, zoom, true);
+      if (halo)
+        L.polyline(cs, { ...halo, renderer: renderers.selection }).addTo(g);
+      L.polyline(cs, {
+        ...skiLineStyle(selected, zoom, true),
+        interactive: false,
+        renderer: renderers.selection,
+      }).addTo(g);
+    }
+    return () => {
+      g.clearLayers();
+      Object.values(renderers).forEach((r) => r.remove());
+    };
+  }, [bundle, catalog, pistes, lifts, ski?.select, zoom, selected]);
+
   useEffect(() => {
     const m = map.current;
     if (!m || !bundle) return;
@@ -164,7 +210,7 @@ export default function TrackMap({
           [s, w],
           [n, e],
         ],
-        { maxZoom: 14, padding: [25, 25] },
+        { maxZoom: 16, padding: [14, 14] },
       );
       lastView.current = key;
       setSelected(null);
@@ -192,19 +238,24 @@ export default function TrackMap({
       }
       L.polyline(segments, {
         color: "#fff",
-        weight: 7,
+        weight: 4.2,
+        pane: "ski-track",
         opacity: 0.85,
         interactive: false,
       }).addTo(g);
-      L.polyline(segments, { color: "#862bd6", weight: 4, opacity: 1 }).addTo(
-        g,
-      );
+      L.polyline(segments, {
+        color: "#862bd6",
+        weight: 2.6,
+        opacity: 1,
+        pane: "ski-track",
+      }).addTo(g);
     }
     if (view.length) {
       const first = view[0],
         p = view.at(-1)!;
       L.circleMarker([first.lat, first.lon], {
         radius: 5,
+        pane: "ski-track",
         color: "#fff",
         fillColor: "#862bd6",
         fillOpacity: 1,
@@ -220,6 +271,7 @@ export default function TrackMap({
         }).addTo(g);
       L.circleMarker([p.lat, p.lon], {
         radius: 7,
+        pane: "ski-track",
         color: "#fff",
         weight: 3,
         fillColor: live ? "#2379d5" : "#862bd6",
@@ -273,6 +325,7 @@ export default function TrackMap({
         m.setView([p.coords.latitude, p.coords.longitude], 14);
         L.circleMarker([p.coords.latitude, p.coords.longitude], {
           radius: 7,
+          pane: "ski-track",
           color: "#fff",
           fillColor: "#2379d5",
           fillOpacity: 1,
@@ -301,75 +354,54 @@ export default function TrackMap({
     bundle?.lines
       .filter((l) => l.name.toLowerCase().includes(query.toLowerCase()))
       .slice(0, 20) ?? [];
+  const legend = (
+    <div className="ski-legend">
+      {["beginner", "easy", "intermediate", "advanced"].map((d) => (
+        <span key={d}>
+          <i style={{ background: pisteColor(d) }} />
+          {difficultyLabels[d].split(" · ")[0]}
+        </span>
+      ))}
+      <span>
+        <i style={{ background: "#737985" }} />
+        Неизвестная
+      </span>
+      <span>
+        <i style={{ background: "#862bd6" }} />
+        Мой трек
+      </span>
+      <span>┄ Подъёмники</span>
+    </div>
+  );
   return (
-    <section className={`ski-map ${large ? "ski-map-large" : ""}`}>
+    <section
+      className={`ski-map ${large ? "ski-map-large" : ""}`}
+      aria-label="Карта курорта"
+    >
       {ski && (
-        <div className="ski-search">
-          <label>
-            Курорт или трасса
-            <input
-              type="search"
-              aria-label="Курорт или трасса"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Найти на карте"
-            />
-          </label>
-          <label>
-            Регион
-            <select
-              aria-label="Регион"
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-            >
-              <option value="">Все регионы</option>
-              {[
-                ...new Set(
-                  catalog?.resorts.map((r) => r.region).filter(Boolean),
-                ),
-              ]
-                .sort()
-                .map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-            </select>
-          </label>
-          {!!catalog?.resorts.length && (
-            <label>
-              Курорт
-              <select
-                aria-label="Курорт"
-                value={ski.id}
-                onChange={(e) => ski.select(e.target.value)}
-              >
-                <option value="">Россия · все курорты</option>
-                {resorts.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-      )}
-      {query && lineResults.length > 0 && (
-        <div className="ski-results">
-          {lineResults.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => {
-                setSelected(l);
-                map.current?.fitBounds(
-                  L.latLngBounds(l.coordinates.map(latlng)),
-                  { maxZoom: 16 },
-                );
-                setQuery("");
-              }}
-            >
-              {l.kind === "lift" ? "↗" : "⌁"} {l.name}
-            </button>
-          ))}
+        <div className="map-searchbar">
+          <button
+            className="map-search-trigger"
+            onClick={() => {
+              setSelected(null);
+              setChooser(true);
+            }}
+            aria-label="Поиск и выбор курорта"
+          >
+            <Search size={19} />
+            <span>{bundle?.resort.name || "Найти курорт или трассу"}</span>
+            <ChevronDown size={16} />
+          </button>
+          <button
+            className="map-info-trigger"
+            onClick={() => {
+              setSelected(null);
+              setInfo(true);
+            }}
+            aria-label="О курорте"
+          >
+            <Info size={21} />
+          </button>
         </div>
       )}
       <div className="map-wrap">
@@ -379,32 +411,131 @@ export default function TrackMap({
           aria-label="Светлая карта катания"
         />
         <div className="ski-map-tools">
-          <button onClick={() => setLayers(!layers)} aria-expanded={layers}>
-            Слои
+          <button
+            onClick={() => {
+              setSelected(null);
+              setLayers(true);
+            }}
+            aria-label="Слои"
+          >
+            <Layers size={18} />
+            <span>Слои</span>
           </button>
+        </div>
+        <div className="ski-location-tools">
           <button onClick={locate} aria-label="Моё положение">
-            ◎
+            <LocateFixed size={20} />
           </button>
           {live && (
-            <button onClick={() => setFollow(!follow)}>
-              {follow ? "Следим за GPS" : "Следовать"}
+            <button onClick={() => setFollow(!follow)} aria-pressed={follow}>
+              {follow ? "Слежение вкл." : "Следовать"}
             </button>
           )}
         </div>
         {tileFailed && (
-          <div className="tile-error" role="status">
-            Подложка карты недоступна. Трек и загруженные трассы сохраняются
-            независимо от карты.
+          <div className="map-tile-notice" role="status">
+            <span>Подложка недоступна</span>
             {terrain && (
-              <button onClick={() => setTerrain(false)}>
-                Открыть светлую OSM
-              </button>
+              <button onClick={() => setTerrain(false)}>Открыть OSM</button>
             )}
           </div>
         )}
-        {layers && (
-          <div className="ski-layer-sheet">
-            <strong>Карта и слои</strong>
+        {(locationError || ski?.error) && (
+          <div className="map-status-note" role="status">
+            {locationError || ski?.error}
+          </div>
+        )}
+        {!bundle && catalog && !catalog.resorts.length && (
+          <button className="map-empty-note" onClick={() => setInfo(true)}>
+            Карты курортов ещё не установлены <Info size={16} />
+          </button>
+        )}
+      </div>
+      {chooser && (
+        <MapSheet title="Курорты и трассы" onClose={() => setChooser(false)}>
+          <div className="ski-search">
+            <label>
+              Курорт или трасса
+              <input
+                autoFocus
+                type="search"
+                aria-label="Курорт или трасса"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Название курорта или трассы"
+              />
+            </label>
+            <label>
+              Регион
+              <select
+                aria-label="Регион"
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+              >
+                <option value="">Все регионы</option>
+                {[
+                  ...new Set(
+                    catalog?.resorts.map((r) => r.region).filter(Boolean),
+                  ),
+                ]
+                  .sort()
+                  .map((r) => (
+                    <option key={r}>{r}</option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Курорт
+              <select
+                aria-label="Курорт"
+                value={ski?.id ?? ""}
+                onChange={(e) => {
+                  ski?.select(e.target.value);
+                  setSelected(null);
+                  setChooser(false);
+                  setQuery("");
+                }}
+              >
+                <option value="">Россия · все курорты</option>
+                {(catalog?.resorts ?? [])
+                  .filter((r) => r.id === ski?.id || resorts.includes(r))
+                  .map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+          <div className="ski-results">
+            {query &&
+              lineResults.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => {
+                    setSelected(l);
+                    setChooser(false);
+                    setQuery("");
+                    map.current?.fitBounds(
+                      L.latLngBounds(l.coordinates.map(latlng)),
+                      { padding: [35, 35], maxZoom: 16 },
+                    );
+                  }}
+                >
+                  {l.kind === "lift" ? "↗" : "⌁"} {l.name}
+                </button>
+              ))}
+          </div>
+          {query && !lineResults.length && !resorts.length && (
+            <p className="fine">
+              Ничего не найдено. Попробуйте другое название.
+            </p>
+          )}
+        </MapSheet>
+      )}
+      {layers && (
+        <MapSheet title="Слои карты" onClose={() => setLayers(false)}>
+          <div className="map-layer-options">
             <label>
               <input
                 type="checkbox"
@@ -437,72 +568,104 @@ export default function TrackMap({
               />
               Мой трек
             </label>
-            <button onClick={() => setLayers(false)}>Готово</button>
           </div>
-        )}
-      </div>
-      <div className="ski-legend">
-        {["beginner", "easy", "intermediate", "advanced"].map((d) => (
-          <span key={d}>
-            <i style={{ background: pisteColor(d) }} />
-            {difficultyLabels[d].split(" · ")[0]}
-          </span>
-        ))}
-        <span>
-          <i style={{ background: "#862bd6" }} />
-          Мой трек
-        </span>
-      </div>
-      {locationError && <p role="status">{locationError}</p>}
-      {ski?.error && <p role="status">{ski.error}</p>}
-      {ski && (
-        <p className="fine">
-          {bundle
-            ? `${bundle.resort.name} · ${bundle.resort.pistes} трасс · ${bundle.resort.lifts} подъёмников · данные ${bundle.updatedAt.slice(0, 10)}`
-            : `Россия · в каталоге ${catalog?.resorts.length ?? 0} курортов`}
-          . Разметка OSM, полнота и открытие не подтверждены.
-          {bundle?.resort.association === "search-window" &&
-            " Объекты поисковой области; официальная принадлежность курорту не подтверждена."}
-        </p>
+          {legend}
+          <button className="primary" onClick={() => setLayers(false)}>
+            Готово
+          </button>
+        </MapSheet>
       )}
-      {catalog && !catalog.resorts.length && (
-        <p className="notice">{catalog.notice}</p>
+      {info && (
+        <MapSheet title="О курорте" onClose={() => setInfo(false)}>
+          {bundle ? (
+            <>
+              <h3>{bundle.resort.name}</h3>
+              <div className="resort-info-stats">
+                <span>
+                  <strong>{bundle.resort.pistes}</strong>участков трасс
+                </span>
+                <span>
+                  <strong>{bundle.resort.lifts}</strong>подъёмников
+                </span>
+                <span>
+                  <strong>{bundle.resort.classified}</strong>с классификацией
+                </span>
+              </div>
+              <p className="fine">
+                Данные: {bundle.updatedAt.slice(0, 10)} · {bundle.resort.region}
+              </p>
+              {legend}
+              <p>
+                Открытые данные OSM. Полнота и текущее открытие трасс не
+                подтверждены.
+              </p>
+              {bundle.resort.association === "search-window" && (
+                <p className="fine">
+                  Объекты поисковой области; официальная принадлежность курорту
+                  не подтверждена.
+                </p>
+              )}
+              <a
+                href={bundle.resort.source}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Источник курорта ↗
+              </a>
+            </>
+          ) : (
+            <>
+              <p>В каталоге {catalog?.resorts.length ?? 0} курортов.</p>
+              <p className="fine">
+                {catalog?.notice || "Выберите курорт, чтобы увидеть сведения."}
+              </p>
+              {legend}
+            </>
+          )}
+          <p className="fine">
+            Тайлы требуют интернета. Отсутствие подложки не останавливает запись
+            GPS. Фиолетовый — ваш маршрут, пунктир — подъёмник.
+          </p>
+        </MapSheet>
       )}
       {selected && (
-        <div
-          className="ski-feature-card"
-          role="region"
-          aria-label="Карточка объекта карты"
+        <MapSheet
+          title={selected.kind === "piste" ? "Трасса" : "Подъёмник"}
+          onClose={() => setSelected(null)}
         >
-          <button className="text-button" onClick={() => setSelected(null)}>
-            Закрыть
-          </button>
-          <h3>{selected.name}</h3>
-          <p>
-            {selected.kind === "piste"
-              ? (difficultyLabels[selected.difficulty ?? "unknown"] ??
-                difficultyLabels.unknown)
-              : `Подъёмник · ${selected.liftType ?? "тип неизвестен"}`}{" "}
-            · {(lineLength(selected.coordinates) / 1000).toFixed(2)} км по
-            геометрии
-          </p>
-          {selected.durationSeconds && (
+          <article
+            className="ski-feature-card"
+            role="region"
+            aria-label="Карточка объекта карты"
+          >
+            <h3>{selected.name}</h3>
             <p>
-              Время в OSM: ~{Math.round(selected.durationSeconds / 60)} мин, не
-              оперативный статус
+              {selected.kind === "piste"
+                ? (difficultyLabels[selected.difficulty ?? "unknown"] ??
+                  difficultyLabels.unknown)
+                : `Подъёмник · ${selected.liftType ?? "тип неизвестен"}`}{" "}
+              · {(lineLength(selected.coordinates) / 1000).toFixed(2)} км по
+              геометрии
             </p>
-          )}
-          <p>
-            {selected.stations.length} известных станций · направление{" "}
-            {selected.direction ? "указано в OSM" : "не подтверждено"}
-          </p>
-          <a href={selected.source} target="_blank" rel="noopener noreferrer">
-            Источник OSM ↗
-          </a>
-          <p className="fine">
-            Статус открытия неизвестен. Не средство безопасной навигации.
-          </p>
-        </div>
+            {selected.durationSeconds != null && (
+              <p>
+                Время в OSM: ~{Math.round(selected.durationSeconds / 60)} мин
+              </p>
+            )}
+            {selected.kind === "lift" && (
+              <p className="fine">
+                {selected.stations.length} известных станций · направление{" "}
+                {selected.direction ? "указано в OSM" : "не подтверждено"}
+              </p>
+            )}
+            <a href={selected.source} target="_blank" rel="noopener noreferrer">
+              Источник OSM ↗
+            </a>
+            <p className="fine">
+              Статус открытия неизвестен. Не средство безопасной навигации.
+            </p>
+          </article>
+        </MapSheet>
       )}
     </section>
   );

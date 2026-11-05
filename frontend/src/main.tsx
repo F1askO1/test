@@ -311,23 +311,26 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       setTab("history");
       setSelected(s);
     });
+  const mapScreen = tab === "map" && !selected;
   return (
     <div className={`shell app-enter page-${selected ? "details" : tab}`}>
-      <header className="topbar">
-        <button
-          className="brand"
-          onClick={() => go("home")}
-          aria-label="На главную"
-        >
-          <RiderMark />
-          <span>SlopeMate</span>
-        </button>
-        <span className="season-tag">
-          <i /> СЕЗОН {new Date(seasonStart()).getFullYear()}/
-          {String(new Date(seasonStart()).getFullYear() + 1).slice(2)}
-        </span>
-      </header>
-      {me.dev && (
+      {!mapScreen && (
+        <header className="topbar">
+          <button
+            className="brand"
+            onClick={() => go("home")}
+            aria-label="На главную"
+          >
+            <RiderMark />
+            <span>SlopeMate</span>
+          </button>
+          <span className="season-tag">
+            <i /> СЕЗОН {new Date(seasonStart()).getFullYear()}/
+            {String(new Date(seasonStart()).getFullYear() + 1).slice(2)}
+          </span>
+        </header>
+      )}
+      {me.dev && !mapScreen && (
         <div className="dev-strip">
           Локальный режим · тестовый профиль · без Telegram
         </div>
@@ -759,48 +762,13 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
               </>
             )}
             {tab === "map" && (
-              <>
-                <PageTitle
-                  over="КАЖДАЯ ЛИНИЯ ИМЕЕТ ЗНАЧЕНИЕ"
-                  title="На карте"
-                  text="Твои маршруты. Твой взгляд на горы."
-                />
-                <TrackMap
-                  points={rec.draft?.points ?? EMPTY_POINTS}
-                  analysis={current}
-                  live={rec.active}
-                  ski={ski}
-                  large
-                />
-                {rec.draft && (
-                  <p className="fine">
-                    Незавершённая запись на этом устройстве
-                  </p>
-                )}
-                <MapLegend />
-                <section className="section">
-                  <h2>Открыть сохранённый маршрут</h2>
-                  {sessions.length ? (
-                    sessions.map((s) => (
-                      <SessionRow
-                        key={s.id}
-                        s={s}
-                        onClick={() => details(s.id)}
-                      />
-                    ))
-                  ) : (
-                    <Empty
-                      text="Маршрутов пока нет"
-                      detail="Начни запись или импортируй GPX в разделе «Катание»."
-                    />
-                  )}
-                </section>
-                <p className="fine">
-                  Карта: © OpenStreetMap contributors. Трассы и подъёмники
-                  доступны из подготовленного набора курорта. Тайлы требуют
-                  интернета; офлайн-карты не поддерживаются.
-                </p>
-              </>
+              <TrackMap
+                points={rec.draft?.points ?? EMPTY_POINTS}
+                analysis={current}
+                live={rec.active}
+                ski={ski}
+                large
+              />
             )}
             {tab === "history" && (
               <>
@@ -1089,9 +1057,11 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
           </button>
         ))}
       </nav>
-      <footer>
-        SLOPEMATE <span>· {__SLOPEMATE_BUILD__.slice(0, 7)}</span>
-      </footer>
+      {!mapScreen && (
+        <footer>
+          SLOPEMATE <span>· {__SLOPEMATE_BUILD__.slice(0, 7)}</span>
+        </footer>
+      )}
     </div>
   );
 }

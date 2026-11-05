@@ -121,16 +121,17 @@ for (const [width, height] of [
       .getByRole("button", { name: "Карта", exact: true })
       .click();
     await expect(
-      page.getByText("Россия · в каталоге 1 курортов", { exact: false }),
+      page.getByRole("button", { name: "Поиск и выбор курорта" }),
     ).toBeVisible();
     await page.screenshot({
       path: `artifacts/ski-map/${width}/catalog-synthetic.png`,
       fullPage: true,
     });
+    await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
     await page.getByLabel("Курорт", { exact: true }).selectOption(resort.id);
-    await expect(
-      page.getByText(/ТЕСТОВЫЙ курорт · синтетика · 4 трасс/),
-    ).toBeVisible();
+    await expect(page.locator(".map-search-trigger")).toContainText(
+      resort.name,
+    );
     await expect(page.locator(".light-ski-map")).toHaveCSS(
       "background-color",
       "rgb(247, 248, 250)",
@@ -143,6 +144,7 @@ for (const [width, height] of [
       path: `artifacts/ski-map/${width}/resort-synthetic.png`,
       fullPage: true,
     });
+    await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
     await page.getByLabel("Курорт или трасса").fill("ТЕСТ трасса 1");
     await page.getByRole("button", { name: "⌁ ТЕСТ трасса 1" }).click();
     await expect(
@@ -152,6 +154,7 @@ for (const [width, height] of [
       path: `artifacts/ski-map/${width}/piste-synthetic.png`,
       fullPage: true,
     });
+    await page.getByRole("button", { name: "Закрыть: Трасса" }).click();
     await page.getByRole("button", { name: "Слои", exact: true }).click();
     await page.getByLabel("Подъёмники и станции").uncheck();
     await expect(page.getByLabel("Подъёмники и станции")).not.toBeChecked();
