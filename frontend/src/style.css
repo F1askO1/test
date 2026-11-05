@@ -90,6 +90,7 @@ a {
   min-height: 44px;
 }
 .brand .rider-mark {
+  mix-blend-mode: screen;
   width: 29px;
   height: 29px;
 }
@@ -108,6 +109,7 @@ a {
   display: none;
 }
 .rider-mark {
+  mix-blend-mode: screen;
   width: 44px;
   height: 44px;
   object-fit: contain;
@@ -1163,6 +1165,7 @@ textarea {
   background: #000;
 }
 .gate > .rider-mark {
+  mix-blend-mode: screen;
   width: 86px;
   height: 86px;
 }

@@ -8,7 +8,7 @@ export function RiderMark({
   return (
     <img
       className={`rider-mark ${className}`}
-      src="/rider.svg"
+      src="/rider.png"
       alt={label}
       draggable={false}
     />
