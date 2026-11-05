@@ -1,4 +1,10 @@
 import "dotenv/config";
+import { proxyTrust } from "./proxy-trust.js";
+import { readFileSync } from "node:fs";
+let buildId = "unbuilt";
+try {
+  buildId = JSON.parse(readFileSync("dist/build-meta.json", "utf8")).id;
+} catch {}
 import { openDb } from "./db.js";
 import { createApp } from "./app.js";
 import { makeBot } from "./bot.js";
@@ -50,7 +56,8 @@ const app = createApp(db, {
     .split(",")
     .filter(Boolean)
     .concat(publicOrigin ? [publicOrigin] : []),
-  trustProxy: Number(process.env.TRUST_PROXY ?? 0),
+  trustProxy: proxyTrust(process.env.TRUST_PROXY ?? "0"),
+  buildId,
   status: () =>
     runtime?.status ?? {
       bot: botConfigError ? "failed" : "disabled",

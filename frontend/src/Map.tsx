@@ -69,14 +69,14 @@ export default function TrackMap({
         {
           color:
             e.kind === "ascent"
-              ? "#95a1ad"
+              ? "#777b85"
               : e.kind === "stop"
-                ? "#788478"
+                ? "#666970"
                 : e.speed > 15
-                  ? "#ff8864"
+                  ? "#dca583"
                   : e.speed > 8
-                    ? "#ddf870"
-                    : "#6bdac4",
+                    ? "#d8dce5"
+                    : "#91b5c8",
           weight: 5,
           opacity: 0.95,
         },
@@ -88,7 +88,7 @@ export default function TrackMap({
       L.circleMarker([first.lat, first.lon], {
         radius: 6,
         color: "#fff",
-        fillColor: "#111715",
+        fillColor: "#050505",
         fillOpacity: 1,
       })
         .bindTooltip("Начало")
@@ -96,7 +96,7 @@ export default function TrackMap({
       L.circleMarker([end.lat, end.lon], {
         radius: 8,
         color: "#fff",
-        fillColor: "#c6f16b",
+        fillColor: "#ffffff",
         fillOpacity: 1,
       })
         .bindTooltip("Последняя точка")

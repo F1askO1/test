@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import { randomUUID, randomBytes } from "node:crypto";
-import { parse } from "dotenv";
+import { parseEnv } from "node:util";
 export class LauncherError extends Error {}
 export function redact(text, secrets = []) {
   let out = String(text);
@@ -26,7 +26,7 @@ export function errorCode(e) {
     : "NETWORK_OR_CONFIG_ERROR";
 }
 export function readEnv(path) {
-  return parse(fs.readFileSync(path));
+  return parseEnv(fs.readFileSync(path, "utf8"));
 }
 export function assertPublicEnv(env) {
   if (env.DEV_AUTH !== "false")

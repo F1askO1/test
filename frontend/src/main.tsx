@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { localDay, aggregate, longestDay } from "./metrics";
+declare const __SLOPEMATE_BUILD__: string;
+import React, { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Mountain,
@@ -37,7 +39,33 @@ import {
   type Session,
   type Profile,
 } from "./api";
-import TrackMap from "./Map";
+const LazyMap = lazy(() => import("./Map"));
+function TrackMap(props: React.ComponentProps<typeof LazyMap>) {
+  return (
+    <Suspense
+      fallback={
+        <div className="map-loading" role="status">
+          Загружаем карту…
+        </div>
+      }
+    >
+      <LazyMap {...props} />
+    </Suspense>
+  );
+}
+import { RiderMark, Splash, LoadingScreen } from "./components/Brand";
+import { Home } from "./screens/Home";
+import {
+  Avatar,
+  PageTitle,
+  Stat,
+  Metrics,
+  Empty,
+  SessionRow,
+  MapLegend,
+  DayChart,
+  ProfileForm,
+} from "./components/UI";
 import { useRecorder } from "./useRecorder";
 import { analyze, type Analysis } from "../../shared/track";
 import { demoNames } from "../../shared/demo";
@@ -53,11 +81,22 @@ function App() {
   const [me, setMe] = useState<Me | null>(null),
     [error, setError] = useState(""),
     [attempt, setAttempt] = useState(0);
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashDismissed, setSplashDismissed] = useState(false);
+  useEffect(() => {
+    if (!me) return;
+    const timer = setTimeout(() => setSplashDismissed(true), 180);
+    return () => clearTimeout(timer);
+  }, [me]);
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSplash(false), 1200);
+    return () => clearTimeout(timer);
+  }, []);
   useEffect(() => {
     tg?.ready();
     tg?.expand();
-    tg?.setHeaderColor?.("#111715");
-    tg?.setBackgroundColor?.("#111715");
+    tg?.setHeaderColor?.("#000000");
+    tg?.setBackgroundColor?.("#000000");
     const safe = () => {
       document.documentElement.style.setProperty(
         "--tg-top",
@@ -79,10 +118,11 @@ function App() {
       tg?.offEvent?.("contentSafeAreaChanged", safe);
     };
   }, [attempt]);
+  if (!me && !error) return showSplash ? <Splash /> : <LoadingScreen />;
   if (!me)
     return (
       <main className="gate">
-        <Mountain size={54} />
+        <RiderMark />
         <h1>SlopeMate</h1>
         <p>{error || "Готовим твою следующую линию…"}</p>
         {error && (
@@ -98,7 +138,12 @@ function App() {
         )}
       </main>
     );
-  return <Workspace me={me} setMe={setMe} />;
+  return (
+    <>
+      <Workspace me={me} setMe={setMe} />
+      {showSplash && !splashDismissed && <Splash exiting />}
+    </>
+  );
 }
 function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
   const [tab, setTab] = useState("home"),
@@ -116,8 +161,21 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
     [resort, setResort] = useState(me.profile.resort),
     [rideTrip, setRideTrip] = useState(""),
     [importDemo, setImportDemo] = useState(false);
+  const [progressView, setProgressView] = useState<"analytics" | "history">(
+    "analytics",
+  );
   const rec = useRecorder(me.user.id);
   const current = useMemo(() => analyze(rec.draft?.points ?? []), [rec.draft]);
+  const liveEdge = current.edges.at(-1);
+  const hasFreshFix =
+    rec.active &&
+    Boolean(current.points.length) &&
+    rec.now - current.points.at(-1)!.t < 20000;
+  const liveSpeed =
+    hasFreshFix && liveEdge && liveEdge.seconds > 0
+      ? speed(liveEdge.speed)
+      : null;
+
   const reload = async () => {
     const data = await api<Session[]>("/sessions");
     setSessions(data);
@@ -230,14 +288,14 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       setSelected(s);
     });
   return (
-    <div className="shell">
+    <div className={`shell app-enter page-${selected ? "details" : tab}`}>
       <header className="topbar">
         <button
           className="brand"
           onClick={() => go("home")}
           aria-label="На главную"
         >
-          <Mountain size={26} />
+          <RiderMark />
           <span>SlopeMate</span>
         </button>
         <span className="season-tag">
@@ -369,171 +427,88 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
         ) : (
           <>
             {tab === "home" && (
-              <>
-                <div className="greeting">
-                  <div>
-                    <span className="eyebrow">ТВОЙ ДЕНЬ. ТВОЯ ЛИНИЯ.</span>
-                    <h1>
-                      Привет, {me.profile.nickname || me.user.first_name}
-                      <span className="accent">.</span>
-                    </h1>
-                    <p>Горы ближе, чем кажется.</p>
-                  </div>
-                  <Avatar me={me} />
-                </div>
-                <section className="hero">
-                  <div className="mountain-art" aria-hidden="true">
-                    <svg viewBox="0 0 600 280">
-                      <path
-                        d="M0 280 170 45 225 112 310 12 600 280Z"
-                        fill="#263a30"
-                      />
-                      <path
-                        d="m170 45 55 67 85-100 90 119-72-33-32-41-70 96-27-37-31 18-32-19-54 67Z"
-                        fill="#b7d1b9"
-                      />
-                      <path
-                        d="m110 280 200-268-33 181 46-67 55 154Z"
-                        fill="#152c24"
-                      />
-                      <path d="m350 280 92-140 158 140Z" fill="#48614b" />
-                      <path
-                        d="m442 140-20 79 21-20 27 26-6-28 37 16Z"
-                        fill="#c0cfb9"
-                      />
-                      <path d="M0 260q170-45 300 0t300-5v25H0" fill="#405740" />
-                    </svg>
-                  </div>
-                  <span className="eyebrow">СЛЕДУЮЩИЙ СПУСК — ТВОЙ</span>
-                  <h2>
-                    Оставь свой
-                    <br />
-                    <em>след на склоне.</em>
-                  </h2>
-                  <p>Записывай линии. Замечай прогресс.</p>
-                  <button className="primary" onClick={() => go("ride")}>
-                    <Play size={18} fill="currentColor" />
-                    {rec.draft ? "Продолжить катание" : "Начать катание"}
-                    <ArrowUpRight size={20} />
-                  </button>
-                  <span className="hero-foot">
-                    <LocateFixed size={12} /> GPS · запись при открытом
-                    приложении
-                  </span>
-                </section>
-                <section className="section">
-                  <div className="section-title">
-                    <h2>Этот сезон</h2>
-                    <button
-                      className="text-button"
-                      onClick={() => go("history")}
-                    >
-                      Вся статистика <ArrowUpRight size={16} />
-                    </button>
-                  </div>
-                  <div className="stat-grid">
-                    <Stat
-                      icon={<Route />}
-                      value={km(summary.distance)}
-                      unit="км"
-                      label="Общая дистанция"
-                      big
-                    />
-                    <Stat
-                      icon={<Zap />}
-                      value={speed(summary.maxSpeed)}
-                      unit="км/ч"
-                      label="Макс. скорость"
-                    />
-                    <Stat
-                      icon={<Flag />}
-                      value={String(summary.runs)}
-                      label="Спусков"
-                    />
-                    <Stat
-                      icon={<Mountain />}
-                      value={String(summary.days)}
-                      label="Дней в горах"
-                    />
-                  </div>
-                  <div className="vertical-row">
-                    <span>Перепад на определённых спусках</span>
-                    <strong>
-                      {summary.drop == null
-                        ? "Нет точных высот"
-                        : `${Math.round(summary.drop)} м`}
-                    </strong>
-                  </div>
-                </section>
-                <section className="section">
-                  <div className="section-title">
-                    <h2>Последняя линия</h2>
-                    <button
-                      className="text-button"
-                      onClick={() => go("history")}
-                    >
-                      История <ChevronRight size={16} />
-                    </button>
-                  </div>
-                  {latest ? (
-                    <SessionRow s={latest} onClick={() => details(latest.id)} />
-                  ) : (
-                    <Empty
-                      text="История начинается с тебя"
-                      detail="Запиши катание, импортируй GPX или открой учебный маршрут."
-                    />
-                  )}
-                </section>
-                <button
-                  className="demo-banner"
-                  disabled={busy}
-                  onClick={() => {
-                    go("ride");
-                    document.getElementById("demo")?.scrollIntoView();
-                  }}
-                >
-                  <span className="row-icon">
-                    <Flame />
-                  </span>
-                  <span>
-                    <strong>До гор ещё далеко?</strong>
-                    <small>Попробуй демо или импортируй GPX</small>
-                  </span>
-                  <ArrowUpRight size={21} />
-                </button>
-              </>
+              <Home
+                me={me}
+                summary={summary}
+                count={season.length}
+                latest={latest}
+                hasDraft={Boolean(rec.draft)}
+                onRide={() => go("ride")}
+                onHistory={() => {
+                  go("history");
+                  setProgressView("history");
+                }}
+                onProgress={() => {
+                  go("history");
+                  setProgressView("analytics");
+                }}
+                onDetails={details}
+              />
             )}
             {tab === "ride" && (
               <>
                 <PageTitle
-                  over="ЗАПИШИ СВОЮ ЛИНИЮ"
+                  over="ТВОЯ СЛЕДУЮЩАЯ ЛИНИЯ"
                   title="Катание"
-                  text="Открой небо над собой. Остальное — за GPS."
+                  text="Маршрут. Движение. Ничего лишнего."
                 />
                 <div className="notice">
                   <LocateFixed size={20} />
                   <span>
-                    Запись работает при открытом Mini App. При блокировке
-                    телефона или сворачивании Telegram координаты могут
-                    перестать поступать.
+                    GPS записывается, пока Mini App открыт. В фоне и при
+                    блокировке телефона запись не гарантируется.
                   </span>
                 </div>
                 <TrackMap points={current.points} />
                 <MapLegend />
-                <div className="record-card">
+                <div
+                  className="record-card"
+                  data-recording={rec.active}
+                  data-state={
+                    rec.active ? "active" : rec.draft ? "paused" : "idle"
+                  }
+                >
                   <div className="section-title">
                     <span className="eyebrow">
                       {rec.active
                         ? "● ЗАПИСЬ ИДЁТ"
                         : rec.draft
-                          ? "ЗАПИСЬ НА УСТРОЙСТВЕ"
+                          ? "ПАУЗА · НА УСТРОЙСТВЕ"
                           : "ГОТОВ К СТАРТУ"}
                     </span>
                     <span>{rec.draft?.points.length ?? 0} точек</span>
                   </div>
-                  <div className="record-number">
-                    {km(current.distance)}
-                    <span> км</span>
+                  <div className="live-speed">
+                    <span className="eyebrow">ТЕКУЩАЯ СКОРОСТЬ</span>
+                    <div>
+                      {liveSpeed ?? "—"}
+                      <small>км/ч</small>
+                    </div>
+                    <span className="gps-quality">
+                      {hasFreshFix
+                        ? "GPS · свежие координаты"
+                        : rec.active
+                          ? "GPS · ожидаем сигнал"
+                          : rec.draft
+                            ? "GPS · приостановлен"
+                            : "GPS · готов к запросу"}
+                    </span>
+                  </div>
+                  <div className="ride-metrics">
+                    <div>
+                      <strong>{km(current.distance)}</strong>
+                      <span>км · дистанция</span>
+                    </div>
+                    <div>
+                      <strong>{duration(current.duration)}</strong>
+                      <span>время трека</span>
+                    </div>
+                    <div>
+                      <strong>
+                        {current.drop == null ? "—" : Math.round(current.drop)}
+                      </strong>
+                      <span>м · точный перепад</span>
+                    </div>
                   </div>
                   <div className="record-details">
                     <span>
@@ -557,48 +532,51 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                       {rec.notice}
                     </p>
                   )}
-                  {!rec.draft && (
-                    <div className="form-grid">
-                      <label>
-                        Курорт (необязательно)
-                        <input
-                          maxLength={100}
-                          value={resort}
-                          onChange={(e) => setResort(e.target.value)}
-                          placeholder="Например, Роза Хутор"
-                        />
+                  <details className="record-options">
+                    <summary>Параметры записи</summary>
+                    {!rec.draft && (
+                      <div className="form-grid">
+                        <label>
+                          Курорт (необязательно)
+                          <input
+                            maxLength={100}
+                            value={resort}
+                            onChange={(e) => setResort(e.target.value)}
+                            placeholder="Например, Роза Хутор"
+                          />
+                        </label>
+                        <label>
+                          Поездка (для группировки)
+                          <input
+                            maxLength={100}
+                            value={rideTrip}
+                            onChange={(e) => setRideTrip(e.target.value)}
+                            placeholder="Например, Кавказ · январь"
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {!rec.active && (
+                      <label className="provider-label">
+                        Источник координат
+                        <select
+                          value={rec.provider}
+                          onChange={(e) =>
+                            rec.setProvider(
+                              e.target.value as "browser" | "telegram",
+                            )
+                          }
+                        >
+                          <option value="browser">
+                            GPS браузера · watchPosition
+                          </option>
+                          <option value="telegram">
+                            Telegram LocationManager · опрос 5 с
+                          </option>
+                        </select>
                       </label>
-                      <label>
-                        Поездка (для группировки)
-                        <input
-                          maxLength={100}
-                          value={rideTrip}
-                          onChange={(e) => setRideTrip(e.target.value)}
-                          placeholder="Например, Кавказ · январь"
-                        />
-                      </label>
-                    </div>
-                  )}
-                  {!rec.active && (
-                    <label className="provider-label">
-                      Источник координат
-                      <select
-                        value={rec.provider}
-                        onChange={(e) =>
-                          rec.setProvider(
-                            e.target.value as "browser" | "telegram",
-                          )
-                        }
-                      >
-                        <option value="browser">
-                          GPS браузера · watchPosition
-                        </option>
-                        <option value="telegram">
-                          Telegram LocationManager · опрос 5 с
-                        </option>
-                      </select>
-                    </label>
-                  )}
+                    )}
+                  </details>
                   <div className="button-stack">
                     {rec.active ? (
                       <button className="secondary" onClick={rec.pause}>
@@ -608,7 +586,10 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                       <button
                         className="primary"
                         disabled={busy}
-                        onClick={() => rec.start(resort, rideTrip)}
+                        onClick={() => {
+                          rec.start(resort, rideTrip);
+                          window.scrollTo({ top: 0 });
+                        }}
                       >
                         <Play size={17} />
                         {rec.draft ? "Возобновить GPS" : "Начать GPS-запись"}
@@ -755,9 +736,31 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
               <>
                 <PageTitle
                   over="ПРОГРЕСС В КАЖДОЙ ЛИНИИ"
-                  title="Твоя статистика"
+                  title={
+                    progressView === "history"
+                      ? "История катаний"
+                      : "Твой прогресс"
+                  }
                   text="Сравнивай себя с собой вчерашним."
                 />
+                <div
+                  className="progress-switch"
+                  role="group"
+                  aria-label="Раздел прогресса"
+                >
+                  <button
+                    className={progressView === "analytics" ? "active" : ""}
+                    onClick={() => setProgressView("analytics")}
+                  >
+                    Обзор
+                  </button>
+                  <button
+                    className={progressView === "history" ? "active" : ""}
+                    onClick={() => setProgressView("history")}
+                  >
+                    История катаний
+                  </button>
+                </div>
                 <div className="segmented">
                   <button
                     className={!demoView ? "active" : ""}
@@ -824,88 +827,92 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                     </select>
                   </label>
                 )}
-                <div className="stat-grid">
-                  <Stat
-                    icon={<Route />}
-                    value={km(stats.distance)}
-                    unit="км"
-                    label="Общая дистанция"
-                  />
-                  <Stat
-                    icon={<Zap />}
-                    value={speed(stats.maxSpeed)}
-                    unit="км/ч"
-                    label="Макс. скорость"
-                  />
-                  <Stat
-                    icon={<Flag />}
-                    value={String(stats.runs)}
-                    label="Спусков"
-                  />
-                  <Stat
-                    icon={<Mountain />}
-                    value={String(stats.days)}
-                    label="Дней катания"
-                  />
-                </div>
-                <div className="summary-lines">
-                  <div>
-                    <span>Средняя скорость движения</span>
-                    <b>{speed(stats.avgSpeed)} км/ч</b>
-                  </div>
-                  <div>
-                    <span>Время движения</span>
-                    <b>{duration(stats.movingSeconds)}</b>
-                  </div>
-                  <div>
-                    <span>Время сессий (включая остановки)</span>
-                    <b>{duration(stats.duration)}</b>
-                  </div>
-                  <div>
-                    <span>Дистанция определённых спусков</span>
-                    <b>{km(stats.descentDistance)} км</b>
-                  </div>
-                  <div>
-                    <span>Перепад на определённых спусках</span>
-                    <b>
-                      {stats.drop == null
-                        ? "Нет точных высот"
-                        : Math.round(stats.drop) + " м"}
-                    </b>
-                  </div>
-                </div>
-                <section className="section">
-                  <div className="section-title">
-                    <h2>Дистанция по дням</h2>
-                    <span>км</span>
-                  </div>
-                  <DayChart sessions={filtered} />
-                </section>
-                <section className="section">
-                  <h2>
-                    {demoView ? "Демо-результаты" : "Личные рекорды"} ·
-                    выбранный период
-                  </h2>
-                  <div className="record-best">
-                    <Flame size={22} />
-                    <span>
-                      Самый длинный трек
-                      <strong>
-                        {km(
-                          Math.max(
-                            0,
-                            ...filtered.map((s) => s.analysis.distance),
-                          ),
-                        )}{" "}
-                        км
-                      </strong>
-                    </span>
-                    <span>
-                      Самый долгий день
-                      <strong>{duration(longestDay(filtered))}</strong>
-                    </span>
-                  </div>
-                </section>
+                {progressView === "analytics" && (
+                  <>
+                    <div className="stat-grid">
+                      <Stat
+                        icon={<Route />}
+                        value={km(stats.distance)}
+                        unit="км"
+                        label="Общая дистанция"
+                      />
+                      <Stat
+                        icon={<Zap />}
+                        value={speed(stats.maxSpeed)}
+                        unit="км/ч"
+                        label="Макс. скорость"
+                      />
+                      <Stat
+                        icon={<Flag />}
+                        value={String(stats.runs)}
+                        label="Спусков"
+                      />
+                      <Stat
+                        icon={<Mountain />}
+                        value={String(stats.days)}
+                        label="Дней катания"
+                      />
+                    </div>
+                    <div className="summary-lines">
+                      <div>
+                        <span>Средняя скорость движения</span>
+                        <b>{speed(stats.avgSpeed)} км/ч</b>
+                      </div>
+                      <div>
+                        <span>Время движения</span>
+                        <b>{duration(stats.movingSeconds)}</b>
+                      </div>
+                      <div>
+                        <span>Время сессий (включая остановки)</span>
+                        <b>{duration(stats.duration)}</b>
+                      </div>
+                      <div>
+                        <span>Дистанция определённых спусков</span>
+                        <b>{km(stats.descentDistance)} км</b>
+                      </div>
+                      <div>
+                        <span>Перепад на определённых спусках</span>
+                        <b>
+                          {stats.drop == null
+                            ? "Нет точных высот"
+                            : Math.round(stats.drop) + " м"}
+                        </b>
+                      </div>
+                    </div>
+                    <section className="section">
+                      <div className="section-title">
+                        <h2>Дистанция по дням</h2>
+                        <span>км</span>
+                      </div>
+                      <DayChart sessions={filtered} />
+                    </section>
+                    <section className="section">
+                      <h2>
+                        {demoView ? "Демо-результаты" : "Личные рекорды"} ·
+                        выбранный период
+                      </h2>
+                      <div className="record-best">
+                        <Flame size={22} />
+                        <span>
+                          Самый длинный трек
+                          <strong>
+                            {km(
+                              Math.max(
+                                0,
+                                ...filtered.map((s) => s.analysis.distance),
+                              ),
+                            )}{" "}
+                            км
+                          </strong>
+                        </span>
+                        <span>
+                          Самый долгий день
+                          <strong>{duration(longestDay(filtered))}</strong>
+                        </span>
+                      </div>
+                    </section>
+                  </>
+                )}
                 <section className="section">
                   <div className="section-title">
                     <h2>История</h2>
@@ -1012,7 +1019,7 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
         ))}
       </nav>
       <footer>
-        ВСТРЕТИМСЯ НА СКЛОНЕ <Mountain size={15} />
+        SLOPEMATE <span>· {__SLOPEMATE_BUILD__.slice(0, 7)}</span>
       </footer>
     </div>
   );
@@ -1024,324 +1031,6 @@ async function importKeyBytes(file: File, userId: number, demo: boolean) {
   combined.set(prefix);
   combined.set(bytes, prefix.length);
   return combined;
-}
-function localDay(t: number) {
-  const d = new Date(t);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function aggregate(s: Session[]) {
-  const movingSeconds = s.reduce((n, x) => n + x.analysis.movingSeconds, 0),
-    distance = s.reduce((n, x) => n + x.analysis.distance, 0),
-    drops = s.map((x) => x.analysis.drop).filter((v): v is number => v != null);
-  return {
-    distance,
-    movingSeconds,
-    avgSpeed: movingSeconds ? distance / movingSeconds : 0,
-    maxSpeed: Math.max(0, ...s.map((x) => x.analysis.maxSpeed)),
-    duration: s.reduce((n, x) => n + x.analysis.duration, 0),
-    days: new Set(s.map((x) => localDay(x.started_at))).size,
-    runs: s.reduce((n, x) => n + x.analysis.runs.length, 0),
-    descentDistance: s.reduce((n, x) => n + x.analysis.descentDistance, 0),
-    drop: drops.length ? drops.reduce((a, b) => a + b, 0) : null,
-  };
-}
-function longestDay(s: Session[]) {
-  const days = new Map<string, number>();
-  for (const v of s) {
-    const k = localDay(v.started_at);
-    days.set(k, (days.get(k) ?? 0) + v.analysis.movingSeconds);
-  }
-  return Math.max(0, ...days.values());
-}
-function Avatar({ me }: { me: Me }) {
-  const [failed, setFailed] = useState(false);
-  return (
-    <div className="avatar">
-      {me.user.photo_url && !failed ? (
-        <img
-          src={me.user.photo_url}
-          alt="Аватар Telegram"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        me.user.first_name.slice(0, 1)
-      )}
-    </div>
-  );
-}
-function PageTitle({
-  over,
-  title,
-  text,
-}: {
-  over: string;
-  title: string;
-  text: string;
-}) {
-  return (
-    <div className="page-heading">
-      <span className="eyebrow">{over}</span>
-      <h1>{title}</h1>
-      <p>{text}</p>
-    </div>
-  );
-}
-function Stat({
-  icon,
-  value,
-  unit,
-  label,
-  big,
-}: {
-  icon: React.ReactNode;
-  value: string;
-  unit?: string;
-  label: string;
-  big?: boolean;
-}) {
-  return (
-    <div className={`stat ${big ? "stat-featured" : ""}`}>
-      <span className="stat-icon">{icon}</span>
-      <div className="stat-value">
-        {value}
-        <small>{unit}</small>
-      </div>
-      <span className="stat-label">{label}</span>
-    </div>
-  );
-}
-function Metrics({ a }: { a: Analysis }) {
-  return (
-    <>
-      <div className="stat-grid">
-        <Stat
-          icon={<Route />}
-          value={km(a.distance)}
-          unit="км"
-          label="Общая дистанция"
-        />
-        <Stat
-          icon={<Zap />}
-          value={speed(a.maxSpeed)}
-          unit="км/ч"
-          label="Макс. скорость"
-        />
-        <Stat
-          icon={<Timer />}
-          value={duration(a.movingSeconds)}
-          label="Время движения"
-        />
-        <Stat
-          icon={<Flag />}
-          value={String(a.runs.length)}
-          label="Определено спусков"
-        />
-      </div>
-      <div className="summary-lines">
-        <div>
-          <span>Средняя скорость движения</span>
-          <b>{speed(a.avgSpeed)} км/ч</b>
-        </div>
-        <div>
-          <span>Перепад на определённых спусках</span>
-          <b>{a.drop == null ? "Не определено" : Math.round(a.drop) + " м"}</b>
-        </div>
-        <div>
-          <span>Дистанция спусков</span>
-          <b>{km(a.descentDistance)} км</b>
-        </div>
-      </div>
-    </>
-  );
-}
-function Empty({ text, detail }: { text: string; detail: string }) {
-  return (
-    <div className="empty">
-      <Mountain size={32} />
-      <h3>{text}</h3>
-      <p>{detail}</p>
-    </div>
-  );
-}
-function SessionRow({ s, onClick }: { s: Session; onClick: () => void }) {
-  return (
-    <button className="session-row" onClick={onClick}>
-      <span className="row-icon">
-        <Mountain size={22} />
-      </span>
-      <span className="row-main">
-        <strong>
-          {s.resort || "Без названия курорта"}
-          {s.source === "demo" && <em className="badge">ДЕМО</em>}
-        </strong>
-        <small>
-          {date(s.started_at)} · {duration(s.analysis.movingSeconds)}
-        </small>
-        <small>
-          {speed(s.analysis.maxSpeed)} км/ч макс. · {s.analysis.runs.length}{" "}
-          спусков
-        </small>
-      </span>
-      <span className="row-distance">
-        {km(s.analysis.distance)}
-        <small>км</small>
-      </span>
-      <ChevronRight size={17} />
-    </button>
-  );
-}
-function MapLegend() {
-  return (
-    <div className="map-legend">
-      <span>
-        <i style={{ background: "#6bdac4" }} />
-        до 29 км/ч
-      </span>
-      <span>
-        <i style={{ background: "#ddf870" }} />
-        29–54
-      </span>
-      <span>
-        <i style={{ background: "#ff8864" }} />
-        54+
-      </span>
-      <span>
-        <i style={{ background: "#95a1ad" }} />
-        подъём
-      </span>
-    </div>
-  );
-}
-function DayChart({ sessions }: { sessions: Session[] }) {
-  const map = new Map<string, number>();
-  for (const s of sessions) {
-    const key = localDay(s.started_at);
-    map.set(key, (map.get(key) ?? 0) + s.analysis.distance);
-  }
-  const bars = [...map].sort(([a], [b]) => a.localeCompare(b)).slice(-14);
-  const max = Math.max(1, ...bars.map((b) => b[1]));
-  return bars.length ? (
-    <div
-      className="chart"
-      role="img"
-      aria-label="Дистанция за последние 14 дней с записями"
-    >
-      {bars.map(([d, m]) => (
-        <div key={d} className="chart-col">
-          <span>{km(m)}</span>
-          <div className="chart-bar-area">
-            <i style={{ height: `${Math.max(2, (m / max) * 100)}%` }} />
-          </div>
-          <small>
-            {d.slice(8)}.{d.slice(5, 7)}
-          </small>
-        </div>
-      ))}
-    </div>
-  ) : (
-    <Empty
-      text="Пока без графика"
-      detail="Он появится на основе сохранённых записей."
-    />
-  );
-}
-function ProfileForm({
-  profile,
-  busy,
-  onSave,
-}: {
-  profile: Profile;
-  busy: boolean;
-  onSave: (p: Profile) => void;
-}) {
-  const [p, setP] = useState(profile),
-    [saved, setSaved] = useState(false);
-  useEffect(() => {
-    setP(profile);
-    setSaved(true);
-  }, [profile]);
-  const field = (key: keyof Profile, val: string) => {
-    setP({ ...p, [key]: val });
-    setSaved(false);
-  };
-  return (
-    <form
-      className="profile-form"
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSave(p);
-      }}
-    >
-      <label>
-        Никнейм
-        <input
-          value={p.nickname}
-          maxLength={40}
-          onChange={(e) => field("nickname", e.target.value)}
-          placeholder="Как тебя зовут на склоне?"
-        />
-      </label>
-      <div className="form-grid">
-        <label>
-          Спорт
-          <select
-            value={p.sport}
-            onChange={(e) => field("sport", e.target.value)}
-          >
-            <option value="snowboard">Сноуборд</option>
-            <option value="ski">Горные лыжи</option>
-          </select>
-        </label>
-        <label>
-          Уровень
-          <select
-            value={p.level}
-            onChange={(e) => field("level", e.target.value)}
-          >
-            <option value="beginner">Новичок</option>
-            <option value="intermediate">Средний</option>
-            <option value="confident">Уверенный</option>
-            <option value="expert">Эксперт</option>
-          </select>
-        </label>
-      </div>
-      <label>
-        Дисциплина
-        <select
-          value={p.discipline}
-          onChange={(e) => field("discipline", e.target.value)}
-        >
-          <option value="all">Универсальное катание</option>
-          <option value="piste">Трассы</option>
-          <option value="freeride">Фрирайд</option>
-          <option value="park">Парк</option>
-        </select>
-      </label>
-      <label>
-        Любимый курорт
-        <input
-          value={p.resort}
-          maxLength={100}
-          onChange={(e) => field("resort", e.target.value)}
-          placeholder="Место, куда хочется вернуться"
-        />
-      </label>
-      <label>
-        Экипировка · необязательно
-        <textarea
-          value={p.equipment}
-          maxLength={200}
-          onChange={(e) => field("equipment", e.target.value)}
-          placeholder="Доска, крепления, ботинки…"
-        />
-      </label>
-      <button className="primary" disabled={busy} type="submit">
-        <Check size={18} />
-        {saved ? "Профиль сохранён" : "Сохранить профиль"}
-      </button>
-    </form>
-  );
 }
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

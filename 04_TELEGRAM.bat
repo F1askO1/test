@@ -8,7 +8,7 @@ if errorlevel 1 (
  pause
  exit /b 1
 )
-node.exe "%~dp0scripts\launcher.mjs" telegram
+node.exe "%~dp0scripts\launcher.mjs" miniapp
 set "RESULT=%ERRORLEVEL%"
 echo.
 if not "%RESULT%"=="0" echo Операция не завершена. Проверьте сообщение выше и 07_DIAGNOSTICS.bat.

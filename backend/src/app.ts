@@ -23,7 +23,8 @@ export type Config = {
   devAuth: boolean;
   token: string;
   origins: string[];
-  trustProxy: number;
+  trustProxy: number | "loopback";
+  buildId?: string;
   status?: () => unknown;
   deploymentId?: string;
   endpoint?: () => unknown;
@@ -116,6 +117,7 @@ export function createApp(db: DB, config: Config) {
     }
     return {
       http: "ready",
+      buildId: config.buildId ?? "unbuilt",
       mode:
         config.production && !config.devAuth
           ? "production-private"

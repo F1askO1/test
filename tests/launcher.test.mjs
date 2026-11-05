@@ -125,7 +125,12 @@ test("actual diagnostic launcher writes no token or proxy credentials to logs", 
   const secret = "123456:synthetic_sensitive_token_never_log_this";
   try {
     fs.mkdirSync(path.join(dir, "scripts"));
-    for (const file of ["launcher.mjs", "network-utils.mjs"])
+    for (const file of [
+      "launcher.mjs",
+      "network-utils.mjs",
+      "build-utils.mjs",
+      "funnel.mjs",
+    ])
       fs.copyFileSync(
         new URL("../scripts/" + file, import.meta.url),
         path.join(dir, "scripts", file),
@@ -159,6 +164,7 @@ test("actual diagnostic launcher writes no token or proxy credentials to logs", 
       assert.ok(!output.includes("socks5://name"));
     }
     assert.match(text, /Диагностика/);
+    assert.ok(!text.includes("cloudflared не найден"));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

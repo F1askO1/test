@@ -10,7 +10,7 @@
     "dev": "concurrently -k -n api,web \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:backend": "tsx watch backend/src/index.ts",
     "dev:frontend": "vite --config frontend/vite.config.ts",
-    "build": "tsc --noEmit && vite build --config frontend/vite.config.ts && tsc -p backend/tsconfig.json",
+    "build": "tsc --noEmit && vite build --config frontend/vite.config.ts && tsc -p backend/tsconfig.json && node scripts/build-meta.mjs",
     "start": "node dist/backend/src/index.js",
     "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "check": "tsc --noEmit",

@@ -1,3 +1,19 @@
+# Проверка Monochrome Alpine и Windows ZIP launcher
+
+Основа: `87bd5ae`, сетевые исправления сохранены. Изменены UI, bootstrap/актуальность сборки, режимы запуска и ограниченное доверие reverse proxy. Схема SQLite, алгоритм GPS/GPX и HMAC initData не переписывались.
+
+- Чистый `npm ci --include=dev --no-audit --no-fund`: успешно.
+- `npm run check`, `npm run build`: успешно.
+- `npm test`: **50 passed**, 0 failed, 0 skipped.
+- Playwright Chromium: **8 passed**. Существующие функциональные сценарии и новые визуальные проверки 375/390/430, reduced motion, ошибки и 393 safe area.
+- Bootstrap проверен в отдельной временной папке без node_modules/dotenv/Git. Проверены receipt установки, распознавание ручного npm ci, stale build, только публичный root Funnel, production Mini App Only без API/прокси и с настоящей локальной HMAC-проверкой тестового initData.
+- 36 снимков: [PREMIUM_UI_REVIEW.md](PREMIUM_UI_REVIEW.md). Тайлы в визуальном тесте намеренно отключены; GPS — эмуляция, Telegram script — mock.
+- Windows, настоящий iPhone, Karing и действующий пользовательский Funnel в облаке не проверены. Инструкция ручной приёмки и переноса SQLite: [START_WINDOWS_RU.md](START_WINDOWS_RU.md). Никаких новых туннелей, серверов, DNS, VPN или платных ресурсов не создавалось.
+
+Ниже сохранены исторические результаты предыдущих итераций; их число тестов и прежнее описание UI относятся к соответствующим версиям.
+
+---
+
 # Результаты проверки 5 ноября 2026
 
 ## Актуальная проверка стабилизации
