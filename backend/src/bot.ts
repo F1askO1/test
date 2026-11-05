@@ -1,8 +1,10 @@
 import { Bot, InlineKeyboard } from "grammy";
 import type { DB } from "./db.js";
 import { listSessions } from "./db.js";
-export function makeBot(token: string, url: string, db: DB) {
-  const bot = new Bot(token);
+import { telegramClient } from "./telegram-network.js";
+
+export function makeBot(token: string, url: string, db: DB, proxy = "") {
+  const bot = new Bot(token, { client: telegramClient(proxy) });
   const keyboard = () =>
     new InlineKeyboard().webApp("🏔 Открыть приложение", url);
   bot.command("start", (ctx) =>
@@ -32,11 +34,5 @@ export function makeBot(token: string, url: string, db: DB) {
       { reply_markup: keyboard() },
     );
   });
-  bot.catch((e) =>
-    console.error(
-      "Bot request failed:",
-      e.error instanceof Error ? e.error.message : "unknown",
-    ),
-  );
   return bot;
 }

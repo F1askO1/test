@@ -12,10 +12,11 @@
     "dev:frontend": "vite --config frontend/vite.config.ts",
     "build": "tsc --noEmit && vite build --config frontend/vite.config.ts && tsc -p backend/tsconfig.json",
     "start": "node dist/backend/src/index.js",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test tests/*.test.ts tests/*.test.mjs",
     "check": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "format": "prettier --write frontend backend shared tests docs README.md package.json tsconfig.json playwright.config.ts"
+    "format": "prettier --write frontend backend shared tests docs README.md package.json tsconfig.json playwright.config.ts",
+    "windows:diagnostics": "node scripts/launcher.mjs diagnostics"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -30,6 +31,7 @@
     "multer": "^2.0.2",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "socks-proxy-agent": "^10.1.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
