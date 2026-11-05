@@ -104,6 +104,21 @@ export function Metrics({ a }: { a: Analysis }) {
           label="Определено спусков"
         />
       </div>
+      {a.engineVersion === 2 && (
+        <div className="summary-lines">
+          <div>
+            Дистанция спусков<strong>{km(a.descentDistance)} км</strong>
+          </div>
+          <div>
+            Подтверждённые подъёмники
+            <strong>
+              {a.liftDistance
+                ? `${km(a.liftDistance)} км · ${duration(a.liftSeconds ?? 0)}`
+                : "Не определены"}
+            </strong>
+          </div>
+        </div>
+      )}
       <div className="summary-lines">
         <div>
           <span>Средняя скорость движения</span>
@@ -165,24 +180,10 @@ export function SessionRow({
 }
 export function MapLegend() {
   return (
-    <div className="map-legend">
-      <span>
-        <i style={{ background: "var(--route-slow)" }} />
-        до 29 км/ч
-      </span>
-      <span>
-        <i style={{ background: "var(--route-mid)" }} />
-        29–54
-      </span>
-      <span>
-        <i style={{ background: "var(--route-fast)" }} />
-        54+
-      </span>
-      <span>
-        <i style={{ background: "var(--route-lift)" }} />
-        подъём
-      </span>
-    </div>
+    <p className="fine">
+      Фиолетовый — ваш трек · пунктир — подъёмник · неизвестная сложность —
+      серая
+    </p>
   );
 }
 export function DayChart({ sessions }: { sessions: Session[] }) {

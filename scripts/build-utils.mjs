@@ -22,6 +22,7 @@ export function sourceIdentity(root) {
     "package.json",
     "package-lock.json",
     "tsconfig.json",
+    "scripts",
   ])
     walk(entry);
   return hash.digest("hex").slice(0, 16);

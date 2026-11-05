@@ -662,9 +662,7 @@ a {
   font-family: var(--font);
   background: #17181b;
 }
-.leaflet-tile-pane {
-  filter: grayscale(1) invert(1) brightness(0.86) contrast(0.9);
-}
+
 .leaflet-control-attribution {
   background: #111d !important;
   color: #ddd !important;
@@ -1404,4 +1402,232 @@ textarea {
   background: #f5f5f7;
   color: #080808;
   border-color: #f5f5f7;
+}
+
+/* Light Ski Map: do not desaturate geographic or difficulty colors. */
+.map.light-ski-map.leaflet-container {
+  background: #f7f8fa;
+  color: #25282e;
+}
+.light-ski-map .leaflet-tile-pane {
+  filter: none;
+}
+.light-ski-map .leaflet-tile {
+  filter: none;
+}
+.light-ski-map .leaflet-control-zoom a {
+  background: #fff;
+  color: #24262c;
+  border-color: #d8dbe1;
+}
+.light-ski-map .leaflet-control-attribution {
+  background: #fffffff0;
+  color: #414650;
+  font-size: 10px;
+}
+.light-ski-map .leaflet-control-attribution a {
+  color: #315b84;
+}
+.ski-map {
+  position: relative;
+  min-width: 0;
+}
+.ski-map .map-wrap {
+  height: 340px;
+  border: 1px solid #d8dbe1;
+  background: #f7f8fa;
+}
+.ski-map-large .map-wrap {
+  height: min(66dvh, 640px);
+  min-height: 360px;
+}
+.ski-map-tools {
+  position: absolute;
+  z-index: 650;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 6px;
+  max-width: calc(100% - 75px);
+  flex-wrap: wrap;
+}
+.ski-map-tools button {
+  background: #fff;
+  color: #25282e;
+  border: 1px solid #d8dbe1;
+  border-radius: 12px;
+  padding: 8px 12px;
+  min-height: 44px;
+  font-size: 12px;
+  box-shadow: 0 2px 8px #0001;
+}
+.ski-map .tile-error {
+  top: 70px;
+  left: 12px;
+  right: 60px;
+  max-width: 320px;
+  background: #fffffff2;
+  color: #645238;
+  border: 1px solid #d8c7a7;
+  font-size: 12px;
+  padding: 10px;
+  pointer-events: none;
+}
+.ski-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.ski-search label:first-child {
+  grid-column: 1/-1;
+}
+.ski-search input,
+.ski-search select {
+  min-width: 0;
+  width: 100%;
+}
+.ski-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 12px 0;
+}
+.ski-legend span {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.ski-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid #aaa;
+}
+.ski-layer-sheet {
+  position: absolute;
+  z-index: 700;
+  top: 64px;
+  left: 12px;
+  right: 12px;
+  background: #fff;
+  color: #23272d;
+  border: 1px solid #d8dbe1;
+  padding: 18px;
+  border-radius: 18px;
+  box-shadow: 0 8px 25px #0002;
+}
+.ski-layer-sheet label {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  color: #23272d;
+}
+.ski-layer-sheet input {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  accent-color: #262c35;
+}
+.ski-layer-sheet button {
+  background: #202329;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 12px;
+  min-height: 44px;
+}
+.ski-results {
+  display: grid;
+  max-height: 180px;
+  overflow: auto;
+  margin-bottom: 12px;
+}
+.ski-results button {
+  padding: 12px;
+  text-align: left;
+  min-height: 44px;
+}
+.ski-feature-card,
+.lift-card {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  margin: 14px 0;
+}
+.ski-feature-card a {
+  color: #c7b7eb;
+  text-decoration: underline;
+}
+.ski-feature-card > .text-button,
+.lift-card > .text-button {
+  float: right;
+  min-height: 44px;
+}
+.lift-card div {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  margin: 16px 0;
+}
+.lift-card strong {
+  font-size: 28px;
+  font-weight: 550;
+}
+.lift-card span,
+.lift-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.lift-card progress {
+  width: 100%;
+  height: 5px;
+  accent-color: white;
+}
+.lift-card h3 {
+  margin: 12px 0;
+}
+
+.light-ski-map .leaflet-control-zoom a {
+  background: #fff !important;
+  color: #25282e !important;
+  border-color: #d8dbe1 !important;
+}
+.light-ski-map .leaflet-control-attribution {
+  background: #fffffff0 !important;
+  color: #414650 !important;
+}
+.light-ski-map .leaflet-control-attribution a {
+  color: #315b84 !important;
+}
+.ski-map .tile-error {
+  bottom: auto;
+}
+
+.gps-heading span {
+  display: block;
+  color: #2379d5;
+  text-shadow: 0 0 2px #fff;
+  font-size: 18px;
+  text-align: center;
+  transform-origin: 16px 16px;
+  line-height: 12px;
+  padding-bottom: 20px;
+}
+
+.ski-map .tile-error {
+  pointer-events: auto;
+}
+.ski-map .tile-error button {
+  display: block;
+  margin-top: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: #202329;
+  color: #fff;
+  border-radius: 9px;
 }

@@ -9,3 +9,9 @@ playwright-report/
 test-results/
 logs/
 artifacts/
+map-data/.import.lock
+ios/**/DerivedData/
+**/xcuserdata/
+*.xcarchive
+*.mobileprovision
+*.p12

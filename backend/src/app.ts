@@ -1,3 +1,6 @@
+import { pointSchema } from "./point-schema.js";
+import { skiCatalog, skiBundle } from "./ski-data.js";
+import { deviceRouter, initDevices, createPair } from "./devices.js";
 import express from "express";
 import { log, safeError } from "./safe-log.js";
 import helmet from "helmet";
@@ -30,21 +33,13 @@ export type Config = {
   endpoint?: () => unknown;
   diagnosticsToken?: string;
 };
-const point = z.object({
-  lat: z.number().min(-90).max(90),
-  lon: z.number().min(-180).max(180),
-  t: z.number().positive().max(8640000000000000),
-  alt: z.number().min(-12000).max(20000).nullable().optional(),
-  accuracy: z.number().nonnegative().nullable().optional(),
-  altAccuracy: z.number().nonnegative().nullable().optional(),
-  speed: z.number().nonnegative().nullable().optional(),
-  breakBefore: z.boolean().optional(),
-});
+const point = pointSchema;
 const session = z.object({
   id: z.uuid(),
   resort: z.string().trim().max(100).default(""),
   trip: z.string().trim().max(100).default(""),
   points: z.array(point).min(2).max(MAX_POINTS),
+  skiResortId: z.string().max(100).optional(),
 });
 export const profileSchema = z.object({
   nickname: z.string().trim().max(40),
@@ -59,6 +54,7 @@ export function createApp(db: DB, config: Config) {
     throw new Error("DEV_AUTH запрещён в production");
   if (config.production && !config.token)
     throw new Error("BOT_TOKEN обязателен в production");
+  initDevices(db);
   const app = express();
   app.disable("x-powered-by");
   if (config.trustProxy) app.set("trust proxy", config.trustProxy);
@@ -74,6 +70,7 @@ export function createApp(db: DB, config: Config) {
             "blob:",
             "https://*.tile.openstreetmap.org",
             "https://tile.openstreetmap.org",
+            "https://*.tile.opentopomap.org",
             "https://*.t.me",
             "https://t.me",
             "https://*.telegram.org",
@@ -151,6 +148,7 @@ export function createApp(db: DB, config: Config) {
     }
     res.set("Cache-Control", "no-store").json(componentStatus());
   });
+  app.use("/api/device", deviceRouter(db));
   app.use("/api", (req, res, next) => {
     let user: TelegramUser;
     try {
@@ -181,6 +179,44 @@ export function createApp(db: DB, config: Config) {
     } catch (e) {
       next(e);
     }
+  });
+  app.get("/api/ski/catalog", (_req, res) => {
+    try {
+      const { files, ...catalog } = skiCatalog();
+      res.json(catalog);
+    } catch {
+      res
+        .status(503)
+        .json({ error: "Каталог карты недоступен. Проверьте map-data." });
+    }
+  });
+  app.get("/api/ski/resorts/:id", (req, res) => {
+    const bundle = skiBundle(String(req.params.id));
+    if (!bundle) {
+      res.status(404).json({ error: "Нет подготовленных геоданных курорта" });
+      return;
+    }
+    res.json(bundle);
+  });
+  app.post("/api/recorder/pair", (_req, res) =>
+    res
+      .set("Cache-Control", "no-store")
+      .json(createPair(db, res.locals.user.id)),
+  );
+  app.get("/api/recorder/devices", (_req, res) =>
+    res.json(
+      db
+        .prepare(
+          "SELECT id,created_at,revoked FROM recorder_devices WHERE user_id=?",
+        )
+        .all(res.locals.user.id),
+    ),
+  );
+  app.delete("/api/recorder/devices/:id", (req, res) => {
+    db.prepare(
+      "UPDATE recorder_devices SET revoked=1 WHERE id=? AND user_id=?",
+    ).run(String(req.params.id), res.locals.user.id);
+    res.status(204).end();
   });
   app.get("/api/me", (_req, res) => {
     const u = res.locals.user;

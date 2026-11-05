@@ -285,3 +285,19 @@ export function prepareLocalDiagnostics(file) {
   }
   return additions.map(([key]) => key);
 }
+
+// Successful snapshots stay quiet between changes; journal still receives every check.
+export function statusGate(summaryEveryMs = 600000) {
+  const previous = new Map();
+  return (component, message, now = Date.now(), error = false) => {
+    const old = previous.get(component),
+      changed = !old || old.message !== message;
+    const print = error || changed || now - old.printed >= summaryEveryMs;
+    previous.set(component, {
+      message,
+      printed: print ? now : old.printed,
+      error,
+    });
+    return { print, recovered: changed && old?.error && !error, error };
+  };
+}

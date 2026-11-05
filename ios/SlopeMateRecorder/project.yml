@@ -1,0 +1,17 @@
+name: SlopeMateRecorder
+options:
+  bundleIdPrefix: app.slopemate
+  deploymentTarget:
+    iOS: '17.0'
+targets:
+  SlopeMateRecorder:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        SWIFT_VERSION: '5.0'
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Info.plist
+        TARGETED_DEVICE_FAMILY: '1'
+        CODE_SIGN_STYLE: Automatic

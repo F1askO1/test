@@ -1,3 +1,8 @@
+import { useSkiData } from "./ski/useSkiData";
+import { useAnalysis } from "./useAnalysis";
+import { LiftCard } from "./ski/LiftCard";
+import { NativeRecorderPanel } from "./ski/NativeRecorderPanel";
+import { matchLift, matchPiste, type SkiLine } from "../../shared/ski";
 import { localDay, aggregate, longestDay } from "./metrics";
 declare const __SLOPEMATE_BUILD__: string;
 import React, { useEffect, useMemo, useState, lazy, Suspense } from "react";
@@ -67,7 +72,7 @@ import {
   ProfileForm,
 } from "./components/UI";
 import { useRecorder } from "./useRecorder";
-import { analyze, type Analysis } from "../../shared/track";
+import { analyze, type Analysis, type Point } from "../../shared/track";
 import { demoNames } from "../../shared/demo";
 import "./style.css";
 const tabs = [
@@ -145,6 +150,8 @@ function App() {
     </>
   );
 }
+const EMPTY_POINTS: Point[] = [];
+const EMPTY_LINES: SkiLine[] = [];
 function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
   const [tab, setTab] = useState("home"),
     [sessions, setSessions] = useState<Session[]>([]),
@@ -165,7 +172,21 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
     "analytics",
   );
   const rec = useRecorder(me.user.id);
-  const current = useMemo(() => analyze(rec.draft?.points ?? []), [rec.draft]);
+  const ski = useSkiData();
+  const current = useAnalysis(
+    rec.draft?.points ?? EMPTY_POINTS,
+    ski.bundle?.lines ?? EMPTY_LINES,
+  );
+  const liftMatch = useMemo(
+    () =>
+      matchLift((rec.draft?.points ?? []).slice(-40), ski.bundle?.lines ?? []),
+    [rec.draft, ski.bundle],
+  );
+  const pisteMatch = useMemo(
+    () =>
+      matchPiste((rec.draft?.points ?? []).slice(-5), ski.bundle?.lines ?? []),
+    [rec.draft, ski.bundle],
+  );
   const liveEdge = current.edges.at(-1);
   const hasFreshFix =
     rec.active &&
@@ -255,7 +276,10 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       rec.pause();
       const result = await api<Session>("/sessions", {
         method: "POST",
-        body: JSON.stringify(rec.draft),
+        body: JSON.stringify({
+          ...rec.draft,
+          skiResortId: ski.id || undefined,
+        }),
       });
       rec.clear();
       await reload();
@@ -348,7 +372,9 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                   ? "ДЕМО · СИНТЕТИЧЕСКИЙ ТРЕК"
                   : selected.source === "gpx"
                     ? "ИМПОРТ GPX"
-                    : "GPS-ЗАПИСЬ"}
+                    : selected.source === "native"
+                      ? "IOS-РЕКОРДЕР"
+                      : "GPS-ЗАПИСЬ"}
               </span>
               <h1>{selected.resort || "Твоя линия"}</h1>
               <p>
@@ -358,10 +384,29 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
             </div>
             <TrackMap
               points={selected.analysis.points}
+              analysis={selected.analysis}
+              ski={ski}
               run={run === undefined ? undefined : selected.analysis.runs[run]}
             />
             <MapLegend />
             <Metrics a={selected.analysis} />
+            <p className="fine">
+              Анализ: GPS Engine {selected.analysis.engineVersion ?? 1}.{" "}
+              {selected.analysis.altitudeQuality === "inferred"
+                ? "Направление по высоте предварительное; точный перепад неизвестен."
+                : ""}
+            </p>
+            {!!selected.analysis.pisteMatches?.length && (
+              <section>
+                <h2>Предположительно распознанные трассы</h2>
+                {selected.analysis.pisteMatches.map((p) => (
+                  <p key={p.id}>
+                    {p.name} · {Math.round(p.distance)} м · вероятная привязка,
+                    не полное прохождение
+                  </p>
+                ))}
+              </section>
+            )}
             <p className="fine">
               {selected.analysis.rejected} точек отфильтровано ·{" "}
               {selected.analysis.gaps} разрывов. Цвет линии — скорость; серый —
@@ -459,7 +504,20 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                     блокировке телефона запись не гарантируется.
                   </span>
                 </div>
-                <TrackMap points={current.points} />
+                <TrackMap
+                  points={rec.draft?.points ?? EMPTY_POINTS}
+                  analysis={current}
+                  live={rec.active}
+                  ski={ski}
+                />
+                <LiftCard
+                  match={rec.active && hasFreshFix ? liftMatch : null}
+                />
+                {rec.active && hasFreshFix && pisteMatch && (
+                  <p className="fine">
+                    Предположительно трасса: {pisteMatch.name}
+                  </p>
+                )}
                 <MapLegend />
                 <div
                   className="record-card"
@@ -534,6 +592,12 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                   )}
                   <details className="record-options">
                     <summary>Параметры записи</summary>
+                    <button
+                      className="text-button"
+                      onClick={() => go("profile")}
+                    >
+                      Запись с заблокированным экраном: iOS-рекордер
+                    </button>
                     {!rec.draft && (
                       <div className="form-grid">
                         <label>
@@ -585,7 +649,7 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                     ) : (
                       <button
                         className="primary"
-                        disabled={busy}
+                        disabled={busy || !rec.ready}
                         onClick={() => {
                           rec.start(resort, rideTrip);
                           window.scrollTo({ top: 0 });
@@ -701,7 +765,13 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                   title="На карте"
                   text="Твои маршруты. Твой взгляд на горы."
                 />
-                <TrackMap points={rec.draft ? current.points : []} />
+                <TrackMap
+                  points={rec.draft?.points ?? EMPTY_POINTS}
+                  analysis={current}
+                  live={rec.active}
+                  ski={ski}
+                  large
+                />
                 {rec.draft && (
                   <p className="fine">
                     Незавершённая запись на этом устройстве
@@ -726,9 +796,9 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                   )}
                 </section>
                 <p className="fine">
-                  Карта: © OpenStreetMap contributors. Подробные трассы и
-                  подъёмники отдельно не загружаются. Тайлы требуют интернета;
-                  офлайн-карты не поддерживаются.
+                  Карта: © OpenStreetMap contributors. Трассы и подъёмники
+                  доступны из подготовленного набора курорта. Тайлы требуют
+                  интернета; офлайн-карты не поддерживаются.
                 </p>
               </>
             )}
@@ -976,6 +1046,7 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
                     })
                   }
                 />
+                <NativeRecorderPanel />
                 <section className="privacy">
                   <LocateFixed size={22} />
                   <div>

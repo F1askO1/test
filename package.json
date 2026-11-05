@@ -17,7 +17,10 @@
     "test:e2e": "playwright test",
     "format": "prettier --write frontend backend shared tests docs README.md package.json tsconfig.json playwright.config.ts",
     "windows:diagnostics": "node scripts/launcher.mjs diagnostics",
-    "soak": "node scripts/soak.mjs"
+    "soak": "node scripts/soak.mjs",
+    "maps:fetch": "node scripts/fetch-ski.mjs",
+    "maps:import": "tsx scripts/import-ski.ts",
+    "gps:evaluate": "tsx scripts/evaluate-gps.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

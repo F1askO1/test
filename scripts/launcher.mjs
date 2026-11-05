@@ -8,6 +8,7 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  statusGate,
   endpointIdentity,
   prepareLocalDiagnostics,
   LauncherError,
@@ -43,6 +44,20 @@ function write(message) {
   const safe = redact(message, [...secrets, root, os.homedir()]);
   console.log(safe);
   fs.appendFileSync(logPath, safe + "\n", { mode: 0o600 });
+}
+const gate = statusGate();
+function monitored(component, message, error = false) {
+  const state = gate(component, message, Date.now(), error);
+  if (state.print) write((state.recovered ? "Восстановлено: " : "") + message);
+  else
+    fs.appendFileSync(
+      logPath,
+      new Date().toISOString() +
+        " " +
+        redact(message, [...secrets, root, os.homedir()]) +
+        "\n",
+      { mode: 0o600 },
+    );
 }
 function load() {
   if (!fs.existsSync(envPath))
@@ -418,13 +433,28 @@ async function monitor() {
     await delay(10000);
     if (stopping) break;
     const localResult = await health(local() + "/api/health");
-    if (!localResult.ok) write("HTTP: " + localResult.reason);
+    monitored(
+      "http-health",
+      localResult.ok ? "HTTP health: ready" : "HTTP: " + localResult.reason,
+      !localResult.ok,
+    );
     if (tunnelState.url) {
       const publicResult = await health(tunnelState.url + "/api/health");
       if (activeIdentity) {
         const match = await endpointIdentity(tunnelState.url, activeIdentity);
-        if (!match.ok) write(match.reason);
+        monitored(
+          "identity",
+          match.ok ? "Deployment identity: ready" : match.reason,
+          !match.ok,
+        );
       }
+      monitored(
+        "public-health",
+        publicResult.ok
+          ? "Публичный health: ready"
+          : "Публичный health: " + publicResult.reason,
+        !publicResult.ok,
+      );
       if (!publicResult.ok) {
         write("Публичный health: " + publicResult.reason);
         write(
@@ -460,7 +490,8 @@ async function componentStatus() {
       return;
     }
     const s = await response.json();
-    write(
+    monitored(
+      "components",
       `Сборка: ${s.buildId ?? "неизвестна"}; HTTP: ${s.http}; SQLite: ${s.database}; бот: ${s.telegram?.bot}; Telegram API: ${s.telegram?.api}; proxy: ${s.telegram?.proxy}; меню: ${s.telegram?.setup ?? "unknown"}`,
     );
   } catch {
@@ -581,7 +612,8 @@ async function remoteMonitor() {
   while (!stopping) {
     const result = await endpointIdentity(url, env.DEPLOYMENT_ID);
     if (result.ok)
-      write(
+      monitored(
+        "remote",
         `REMOTE HTTP=${result.status.http}; DB=${result.status.database}; bot=${result.status.telegram?.bot}; API=${result.status.telegram?.api}; menu=${result.status.telegram?.menu}`,
       );
     else write(result.reason);

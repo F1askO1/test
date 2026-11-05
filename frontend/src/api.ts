@@ -20,7 +20,7 @@ export type Me = {
 };
 export type Session = {
   id: string;
-  source: "gps" | "gpx" | "demo";
+  source: "gps" | "gpx" | "demo" | "native";
   resort: string;
   trip: string;
   started_at: number;

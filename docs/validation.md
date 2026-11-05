@@ -1,3 +1,11 @@
+# Ski Map / GPS Engine 2.0 — текущая проверка
+
+`npm run check`, `npm run build`: успешно. `npm test`: **63 passed**. Chromium Playwright: **14 passed**. Подробности, честные ограничения и синтетические скриншоты — [SKI_MAP_TEST_REPORT_RU.md](SKI_MAP_TEST_REPORT_RU.md).
+
+Реальные данные российских курортов не загружены из-за network policy (начальный каталог 0/0/0). Нативный iOS-проект не собран без Mac/Xcode и не испытан при блокировке экрана. Эти критерии не объявлены выполненными. Следующие разделы — исторические проверки прежних версий.
+
+---
+
 # Проверка Monochrome Alpine и Windows ZIP launcher
 
 Основа: `87bd5ae`, сетевые исправления сохранены. Изменены UI, bootstrap/актуальность сборки, режимы запуска и ограниченное доверие reverse proxy. Схема SQLite, алгоритм GPS/GPX и HMAC initData не переписывались.

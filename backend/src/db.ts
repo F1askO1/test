@@ -1,3 +1,5 @@
+import { skiBundle } from "./ski-data.js";
+import { analyze as analyzeV1 } from "../../shared/track-v1.js";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -13,7 +15,9 @@ export function openDb(path: string) {
  CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(user_id,started_at);
  CREATE TABLE IF NOT EXISTS gps_points(session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,seq INTEGER NOT NULL,point TEXT NOT NULL,PRIMARY KEY(session_id,seq));
  CREATE TABLE IF NOT EXISTS runs(session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,seq INTEGER NOT NULL,details TEXT NOT NULL,PRIMARY KEY(session_id,seq));
- PRAGMA user_version=1;`);
+`);
+  if (Number(db.prepare("PRAGMA user_version").get()?.user_version ?? 0) < 2)
+    db.exec("PRAGMA user_version=2");
   return db;
 }
 export type DB = ReturnType<typeof openDb>;
@@ -34,6 +38,7 @@ export function saveSession(
     resort: string;
     trip: string;
     points: Point[];
+    skiResortId?: string;
   },
 ) {
   const existing = db
@@ -43,12 +48,14 @@ export function saveSession(
     if (existing.user_id !== user) throw new Error("Идентификатор уже занят");
     return getSession(db, user, data.id);
   }
-  const a = analyze(data.points);
+  const a = analyze(data.points, {
+    lines: data.skiResortId ? skiBundle(data.skiResortId)?.lines : undefined,
+  });
   if (a.points.length < 2 || a.duration <= 0)
     throw new Error("Недостаточно пригодных GPS-данных");
   db.exec("BEGIN IMMEDIATE");
   try {
-    const { points, edges, ...summary } = a;
+    const { points, ...summary } = a;
     db.prepare("INSERT INTO sessions VALUES(?,?,?,?,?,?,?,?)").run(
       data.id,
       user,
@@ -82,10 +89,9 @@ export function listSessions(db: DB, user: number) {
       resort: row.resort as string,
       trip: row.trip as string,
       started_at: row.started_at as number,
-      analysis: JSON.parse(row.analysis as string) as Omit<
-        Analysis,
-        "points" | "edges"
-      >,
+      analysis: (({ edges, ...summary }) => summary)(
+        JSON.parse(row.analysis as string),
+      ) as Omit<Analysis, "points" | "edges">,
     }));
 }
 export function getSession(db: DB, user: number, id: string) {
@@ -102,8 +108,10 @@ export function getSession(db: DB, user: number, id: string) {
   return {
     ...row,
     analysis: {
-      ...analyze(points),
-      rejected: JSON.parse(row.analysis as string).rejected,
+      ...(JSON.parse(row.analysis as string).engineVersion === 2
+        ? analyze(points)
+        : analyzeV1(points)),
+      ...JSON.parse(row.analysis as string),
     },
   };
 }

@@ -1,0 +1,29 @@
+{
+  "type": "SYNTHETIC ONLY — not field accuracy",
+  "samples": 1,
+  "runCount": 2,
+  "edgeMetrics": {
+    "descent": {
+      "tp": 116,
+      "fp": 4,
+      "fn": 4,
+      "precision": 0.9666666666666667,
+      "recall": 0.9666666666666667,
+      "F1": 0.9666666666666667
+    },
+    "ascent": {
+      "tp": 56,
+      "fp": 4,
+      "fn": 4,
+      "precision": 0.9333333333333333,
+      "recall": 0.9333333333333333,
+      "F1": 0.9333333333333333
+    }
+  },
+  "eta": {
+    "predicted": 430.0000000010658,
+    "groundTruth": 430.00000017237596,
+    "absoluteError": 1.7131014828919433e-7
+  },
+  "limitations": "Ideal polyline/altitude generated mathematically; shared assumptions make ETA error artificially small. No real precision/recall or iPhone energy measurement."
+}

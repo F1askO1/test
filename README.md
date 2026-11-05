@@ -1,5 +1,12 @@
 # SlopeMate
 
+Текущая ветка `feat/slopemate-ski-map-gps-v2`: светлая карта в тёмном интерфейсе, поиск/слои/геометрия OSM, GPS Engine 2.0 с версионной историей, IndexedDB и worker, экспериментальный iOS companion с безопасной привязкой. **Реальные данные России в cloud-среде не загружены (network policy 403); исходный каталог пуст. Нативная iOS-сборка и фоновая запись на устройстве не проверены.** До этих внешних проверок полная приёмка этапа не завершена.
+
+- [Исследование карты](docs/SKI_MAP_RESEARCH_RU.md), [фактическое покрытие и импорт](docs/RUSSIA_RESORT_COVERAGE_RU.md).
+- [GPS 2.0](docs/GPS_ENGINE_V2_RU.md), [подъёмники и ETA](docs/LIFT_ETA_RU.md).
+- [iOS background research](docs/BACKGROUND_GPS_IOS_RESEARCH_RU.md), [архитектура](docs/BACKGROUND_GPS_ARCHITECTURE_RU.md), [ручная приёмка](docs/BACKGROUND_GPS_TEST_REPORT_RU.md).
+- [Windows без Git](docs/START_WINDOWS_RU.md), [проверки и скриншоты карты](docs/SKI_MAP_TEST_REPORT_RU.md).
+
 Telegram Mini App для сноубордистов и лыжников: GPS-запись при открытом приложении, GPX, интерактивная карта, личная история, статистика и профиль. Интерфейс на русском, основная тема тёмная.
 
 Это исходный код первого MVP, а не опубликованный Telegram-бот. Браузерный режим можно запустить сразу. Для настоящего Telegram нужны ваш бот, его токен и HTTPS-адрес. Токен не отправляйте в чат и не добавляйте в Git. Проверки на физическом iPhone и в вашем Telegram требуют ручного выполнения.
