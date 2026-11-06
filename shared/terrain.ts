@@ -1,3 +1,4 @@
+import { containsArea, type SkiArea } from "./ski-areas.js";
 import type { Analysis, Point } from "./track.js";
 import {
   matchLift,
@@ -47,10 +48,15 @@ export function terrainAnalysis(
   a: Analysis,
   lines: SkiLine[],
   coverage: "partial" | "complete" | "none" = lines.length ? "partial" : "none",
+  areas: SkiArea[] = [],
 ): TerrainAnalysis {
   const nearby = lineIndex(lines);
   const pistes = lines.filter(
-    (l) => l.kind === "piste" && !closedContour(l) && l.osmTags?.area !== "yes",
+    (l) =>
+      l.kind === "piste" &&
+      l.geometryRole !== "area-boundary" &&
+      !closedContour(l) &&
+      l.osmTags?.area !== "yes",
   );
   const all = lines.flatMap((l) => l.coordinates),
     bbox = all.length
@@ -101,7 +107,7 @@ export function terrainAnalysis(
       e.seconds > 35 ||
       !coverage ||
       coverage === "none" ||
-      !pistes.length
+      (!pistes.length && !areas.some((a) => a.complete))
     ) {
       reset();
       continue;
@@ -148,13 +154,38 @@ export function terrainAnalysis(
       reset();
       continue;
     }
-    const match = matchPiste(tail, localPistes);
+    const lineMatch = matchPiste(tail, localPistes);
+    const areaMatches = areas.filter(
+      (a) => containsArea(p, a) && containsArea(q, a),
+    );
+    if (
+      !lineMatch &&
+      new Set(areaMatches.map((a) => [a.difficulty, a.grooming].join(":")))
+        .size > 1
+    ) {
+      r.reason = "conflicting-area-tags";
+      r.sourceIds = areaMatches.map((a) => a.id);
+      reset();
+      continue;
+    }
+    const area = areaMatches[0];
+    const match =
+      lineMatch ??
+      (area
+        ? {
+            id: area.id,
+            name: area.name,
+            difficulty: area.difficulty,
+            confidence: "probable" as const,
+          }
+        : null);
     if (match) {
       r.sourceIds = [match.id];
-      const line = pistes.find((l) => l.id === match.id)!;
+      const line = pistes.find((l) => l.id === match.id);
       const mappedFreeride =
-        line.difficulty === "freeride" ||
-        line.osmTags?.["piste:grooming"] === "backcountry";
+        match.difficulty === "freeride" ||
+        line?.osmTags?.["piste:grooming"] === "backcountry" ||
+        (!line && area?.grooming === "backcountry");
       Object.assign(r, {
         type: mappedFreeride ? "off_piste" : "piste",
         confidence: "probable",

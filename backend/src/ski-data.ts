@@ -45,6 +45,7 @@ export const lineSchema = z.object({
   kind: z.enum(["piste", "lift"]),
   coordinates: z.array(coord).min(2).max(30000),
   difficulty: z.string().max(100).nullable(),
+  geometryRole: z.enum(["centerline", "area-boundary"]).optional(),
   osmTags: z.record(z.string(), z.string().max(500)).optional(),
   routeRelations: z
     .array(
@@ -80,6 +81,28 @@ export const catalogSchema = z.object({
   files: z.record(z.string(), z.string()).optional(),
 });
 export const bundleSchema = z.object({
+  areas: z
+    .array(
+      z.object({
+        id: z.string().regex(/^(way|relation)-[0-9]+$/),
+        name: z.string().max(200),
+        difficulty: z.string().max(100).nullable(),
+        grooming: z.string().optional(),
+        rings: z.array(
+          z
+            .array(coord)
+            .min(4)
+            .max(30000)
+            .refine(
+              (cs) => cs[0][0] === cs.at(-1)![0] && cs[0][1] === cs.at(-1)![1],
+              "Незамкнутое кольцо площади",
+            ),
+        ),
+        sources: z.array(z.string()),
+        complete: z.boolean(),
+      }),
+    )
+    .optional(),
   resort: resortSchema,
   lines: z.array(lineSchema).max(15000),
   attribution: z.string().max(1000),

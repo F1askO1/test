@@ -1,9 +1,12 @@
+import type { SkiArea } from "../../shared/ski-areas";
+import { monitorTiles, MonitoredTileLayer } from "./ski/tile-monitor";
 import {
   displayGeometry,
   displayPaths,
+  generalizeDisplay,
   closedContour,
 } from "../../shared/ski-display";
-import { tileHealth, type TileHealth } from "./ski/tile-health";
+import { viewportTileHealth, type TileHealth } from "./ski/tile-health";
 import type { TerrainSegment } from "../../shared/terrain";
 import { Search, Layers, LocateFixed, Info, ChevronDown } from "lucide-react";
 import { MapSheet } from "./ski/MapSheet";
@@ -55,9 +58,13 @@ export default function TrackMap({
       selection: L.Canvas;
     } | null>(null),
     lastView = useRef("");
-  const [tileStatus, setTileStatus] = useState<TileHealth>(tileHealth(0, 0)),
+  const [tileStatus, setTileStatus] = useState<TileHealth>(
+      viewportTileHealth({ x: 0, y: 0, width: 0, height: 0 }, []),
+    ),
+    [retryToken, setRetryToken] = useState(0),
     [fallback, setFallback] = useState(false),
     [rawGeometry, setRawGeometry] = useState(false),
+    [selectedArea, setSelectedArea] = useState<SkiArea | null>(null),
     [sharedSources, setSharedSources] = useState<SkiLine[]>([]),
     [terrainSegment, setTerrainSegment] = useState<TerrainSegment | null>(null);
   const [tileFailed, setTileFailed] = useState(false),
@@ -81,10 +88,15 @@ export default function TrackMap({
     bundle = ski?.bundle;
   const display = useMemo(() => displayGeometry(bundle?.lines ?? []), [bundle]);
   const paths = useMemo(() => displayPaths(display.segments), [display]);
+  const visualPaths = useMemo(
+    () => generalizeDisplay(paths, zoom),
+    [paths, zoom],
+  );
   useEffect(() => {
     if (!ref.current) return;
     const m = L.map(ref.current, {
       zoomControl: false,
+      fadeAnimation: false,
       preferCanvas: true,
       zoomSnap: 0.5,
     }).setView([61, 90], 3);
@@ -137,57 +149,47 @@ export default function TrackMap({
     if (!m) return;
     base.current?.remove();
     setTileFailed(false);
-    const tiles = L.tileLayer(
+    m.setMaxZoom(terrain ? 17 : 19);
+    const retina = window.devicePixelRatio > 1,
+      providerMax = terrain ? 17 : 19;
+    const tiles = new MonitoredTileLayer(
       terrain
         ? "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
         : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
-        maxZoom: 19,
-        maxNativeZoom: terrain ? 17 : 19,
+        maxZoom: providerMax,
+        maxNativeZoom: providerMax - (retina ? 1 : 0),
+        tileSize: retina ? 128 : 256,
+        zoomOffset: retina ? 1 : 0,
+        detectRetina: false,
         attribution: terrain
           ? '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
           : '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       },
-    ).addTo(m);
+    );
     base.current = tiles;
-    let loaded = 0,
-      failed = 0,
-      disposed = false;
-    const update = (timeout = false) => {
-      if (disposed) return;
-      const status = tileHealth(loaded, failed, timeout);
-      setTileStatus(status);
-      setTileFailed(status.state === "unavailable");
-      if (status.state === "unavailable" && terrain) {
-        setFallback(true);
-        setTerrain(false);
-      }
-    };
-    tiles.on("loading", () => {
-      loaded = 0;
-      failed = 0;
-      update();
-    });
-    tiles.on("tileload", () => {
-      loaded++;
-      update();
-    });
-    tiles.on("tileerror", () => {
-      failed++;
-      update();
-    });
-    let timer = window.setTimeout(() => update(true), 12000);
-    tiles.on("loading", () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => update(true), 12000);
-    });
-    tiles.on("load", () => update(true));
+    const stop = monitorTiles(
+      m,
+      tiles,
+      terrain ? "topo" : "osm",
+      (status) => {
+        setTileStatus(status);
+        setTileFailed(
+          status.state === "unavailable" || status.state === "partial",
+        );
+      },
+      () => {
+        if (terrain) {
+          setFallback(true);
+          setTerrain(false);
+        }
+      },
+    );
     return () => {
-      disposed = true;
-      window.clearTimeout(timer);
+      stop();
       tiles.remove();
     };
-  }, [terrain]);
+  }, [terrain, retryToken]);
   useEffect(() => {
     const m = map.current,
       g = features.current;
@@ -249,6 +251,26 @@ export default function TrackMap({
         })
         .addTo(g);
     };
+    if (!rawGeometry && pistes)
+      for (const area of bundle.areas ?? []) {
+        if (!area.complete) continue;
+        L.polygon(
+          area.rings.map((r) => r.map(latlng)),
+          {
+            renderer: renderers.piste,
+            stroke: false,
+            fillColor: pisteColor(area.difficulty),
+            fillOpacity: 0.085,
+            fillRule: "evenodd",
+          },
+        )
+          .bindTooltip(textLabel(area.name + " · площадная трасса OSM"))
+          .on("click", () => {
+            setSelected(null);
+            setSelectedArea(area);
+          })
+          .addTo(g);
+      }
     if (rawGeometry) visible.forEach((l) => draw(l.coordinates, [l]));
     else {
       // Legacy rings lost area tags during import. Show as contextual contours,
@@ -271,7 +293,7 @@ export default function TrackMap({
       }
     }
     if (!rawGeometry)
-      paths.forEach((s) => draw(s.coordinates, s.sources, s.conflict));
+      visualPaths.forEach((s) => draw(s.coordinates, s.sources, s.conflict));
     if (lifts && showStations(zoom)) {
       const seen = new Set<string>();
       for (const l of visible.filter((l) => l.kind === "lift"))
@@ -320,6 +342,7 @@ export default function TrackMap({
     selected,
     display,
     paths,
+    visualPaths,
     rawGeometry,
   ]);
 
@@ -348,8 +371,9 @@ export default function TrackMap({
     const view = run ? points.slice(run.start, run.end + 1) : points;
     // Reuse worker analysis while recording; historical analysis follows its saved version.
     const a = run
-      ? analyze(view, { lines: bundle?.lines })
-      : (analysis ?? analyze(view, { lines: bundle?.lines }));
+      ? analyze(view, { lines: bundle?.lines, areas: bundle?.areas })
+      : (analysis ??
+        analyze(view, { lines: bundle?.lines, areas: bundle?.areas }));
     renderedAnalysis.current = a;
     if (myTrack && a.edges.length) {
       const segments: L.LatLngTuple[][] = [];
@@ -493,6 +517,7 @@ export default function TrackMap({
           }))
           .sort((a, b) => a.distance - b.distance);
         if (matches[0]?.distance <= tolerance) {
+          setSelectedArea(null);
           setSelected(null);
           setTerrainSegment(matches[0].segment);
           setChooser(false);
@@ -508,6 +533,7 @@ export default function TrackMap({
         .sort((a, b) => a.distance - b.distance);
       if (candidates[0]?.distance <= tolerance) {
         const sources = candidates[0].path.sources;
+        setSelectedArea(null);
         setTerrainSegment(null);
         setSharedSources(sources);
         setSelected(sources[0]);
@@ -566,7 +592,11 @@ export default function TrackMap({
   );
   const lineResults =
     bundle?.lines
-      .filter((l) => l.name.toLowerCase().includes(query.toLowerCase()))
+      .filter(
+        (l) =>
+          l.geometryRole !== "area-boundary" &&
+          l.name.toLowerCase().includes(query.toLowerCase()),
+      )
       .slice(0, 20) ?? [];
   const legend = (
     <div className="ski-legend">
@@ -592,6 +622,13 @@ export default function TrackMap({
       className={`ski-map ${large ? "ski-map-large" : ""}`}
       aria-label="Карта курорта"
       data-map-view={mapView}
+      data-basemap-provider={terrain ? "topo" : "osm"}
+      data-tile-state={tileStatus.state}
+      data-tile-loaded={tileStatus.loaded}
+      data-tile-failed={tileStatus.failed}
+      data-tile-pending={tileStatus.pending}
+      data-tile-visible={tileStatus.visible}
+      data-tile-coverage={tileStatus.coverage.toFixed(6)}
       data-display-segments={display.segments.length}
       data-source-lines={bundle?.lines.length ?? 0}
       data-geometry-mode={rawGeometry ? "raw" : "normalized"}
@@ -650,13 +687,26 @@ export default function TrackMap({
             </button>
           )}
         </div>
-        {(tileFailed || fallback) && (
+        {(tileFailed || fallback || tileStatus.state === "loading") && (
           <div className="map-tile-notice" role="status">
             <span>
-              {tileFailed
-                ? "Подложка недоступна"
-                : "Рельеф недоступен · резерв OSM"}
+              {tileStatus.state === "loading"
+                ? "Загрузка подложки · " +
+                  Math.round(tileStatus.coverage * 100) +
+                  "%"
+                : tileStatus.state === "partial"
+                  ? "Подложка неполная · " +
+                    Math.round(tileStatus.coverage * 100) +
+                    "%"
+                  : tileFailed
+                    ? "Подложка недоступна"
+                    : "Рельеф недоступен · резерв OSM"}
             </span>
+            {tileFailed && (
+              <button onClick={() => setRetryToken((n) => n + 1)}>
+                Повторить
+              </button>
+            )}
             {terrain && (
               <button
                 onClick={() => {
@@ -755,12 +805,39 @@ export default function TrackMap({
                   {l.kind === "lift" ? "↗" : "⌁"} {l.name}
                 </button>
               ))}
+            {query &&
+              (bundle?.areas ?? [])
+                .filter((a) =>
+                  a.name.toLowerCase().includes(query.toLowerCase()),
+                )
+                .map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => {
+                      setSelected(null);
+                      setSelectedArea(a);
+                      setChooser(false);
+                      setQuery("");
+                      map.current?.fitBounds(
+                        L.latLngBounds(a.rings.flatMap((r) => r.map(latlng))),
+                        { padding: [35, 35], maxZoom: 16 },
+                      );
+                    }}
+                  >
+                    ▱ {a.name} · площадь
+                  </button>
+                ))}
           </div>
-          {query && !lineResults.length && !resorts.length && (
-            <p className="fine">
-              Ничего не найдено. Попробуйте другое название.
-            </p>
-          )}
+          {query &&
+            !lineResults.length &&
+            !resorts.length &&
+            !(bundle?.areas ?? []).some((a) =>
+              a.name.toLowerCase().includes(query.toLowerCase()),
+            ) && (
+              <p className="fine">
+                Ничего не найдено. Попробуйте другое название.
+              </p>
+            )}
         </MapSheet>
       )}
       {layers && (
@@ -827,7 +904,7 @@ export default function TrackMap({
               <h3>{bundle.resort.name}</h3>
               <div className="resort-info-stats">
                 <span>
-                  <strong>{bundle.resort.pistes}</strong>участков трасс
+                  <strong>{bundle.resort.pistes}</strong>OSM-участков
                 </span>
                 <span>
                   <strong>{bundle.resort.lifts}</strong>подъёмников
@@ -844,6 +921,26 @@ export default function TrackMap({
                 рёбер: {display.segments.length}. Замкнутых контуров:{" "}
                 {display.contours.length}. Ребро — часть геометрии, не отдельная
                 трасса.
+                {bundle.areas && (
+                  <>
+                    {" "}
+                    Линейных участков трасс:{" "}
+                    {
+                      bundle.lines.filter(
+                        (l) =>
+                          l.kind === "piste" &&
+                          l.geometryRole !== "area-boundary",
+                      ).length
+                    }
+                    ; границ площадей:{" "}
+                    {
+                      bundle.lines.filter(
+                        (l) => l.geometryRole === "area-boundary",
+                      ).length
+                    }
+                    ; площадей: {bundle.areas.length}.
+                  </>
+                )}
               </p>
               {legend}
               <p>
@@ -932,6 +1029,43 @@ export default function TrackMap({
           </p>
         </MapSheet>
       )}
+      {selectedArea && (
+        <MapSheet
+          title="Площадная трасса"
+          onClose={() => setSelectedArea(null)}
+        >
+          <h3>{selectedArea.name}</h3>
+          {selectedArea.grooming === "backcountry" && (
+            <p>Внетрассовая / неподготовленная площадь по разметке OSM.</p>
+          )}
+          <p>
+            {difficultyLabels[selectedArea.difficulty ?? "unknown"] ??
+              selectedArea.difficulty}
+          </p>
+          <p className="fine">
+            Подтверждённая площадная геометрия OSM. Это площадь катания, а не
+            набор осевых маршрутов. Открытие и безопасность не подтверждены.
+          </p>
+          <a
+            href={
+              "https://www.openstreetmap.org/" +
+              selectedArea.id
+                .replace("relation-", "relation/")
+                .replace("way-", "way/")
+            }
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Источник OSM
+          </a>
+          <details>
+            <summary>Исходные границы: {selectedArea.sources.length}</summary>
+            {selectedArea.sources.map((id) => (
+              <p key={id}>{id}</p>
+            ))}
+          </details>
+        </MapSheet>
+      )}
       {selected && (
         <MapSheet
           title={selected.kind === "piste" ? "Трасса" : "Подъёмник"}
@@ -943,7 +1077,13 @@ export default function TrackMap({
             aria-label="Карточка объекта карты"
           >
             <h3>{selected.name}</h3>
-            {closedContour(selected) && (
+            {selected.geometryRole === "area-boundary" && (
+              <p className="fine">
+                Граница площадной трассы OSM, не отдельная осевая линия спуска.
+                Длина периметра не равна длине катания.
+              </p>
+            )}
+            {closedContour(selected) && !selected.geometryRole && (
               <p className="fine">
                 Замкнутый контур OSM. В старом пакете отсутствуют теги area:
                 назначение не подтверждено. Это не доказанная осевая линия
@@ -952,7 +1092,11 @@ export default function TrackMap({
             )}
             {sharedSources.length > 1 && (
               <div>
-                <p>Общий геометрический участок. Все исходные объекты:</p>
+                <p>
+                  {selected.geometryRole === "area-boundary"
+                    ? "Исходные границы площади:"
+                    : "Общий геометрический участок. Все исходные объекты:"}
+                </p>
                 {sharedSources.map((l) => (
                   <p key={l.id}>
                     <a

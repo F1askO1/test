@@ -113,14 +113,11 @@ test("MOCK tiles only: automatic OSM fallback is bounded and diagnostics disting
 }) => {
   await page.route("https://telegram.org/**", (r) => r.abort());
   await page.route(/https:\/\/.*tile\.opentopomap\.org\//, (r) => r.abort());
-  // A 1px mocked image proves fallback lifecycle only, NEVER real terrain availability.
+  // A 256px mocked image proves fallback lifecycle only, NEVER real terrain availability.
   await page.route("https://tile.openstreetmap.org/**", (r) =>
     r.fulfill({
-      contentType: "image/png",
-      body: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRz0AAAAASUVORK5CYII=",
-        "base64",
-      ),
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="white"/></svg>',
     }),
   );
   await page.goto("/");

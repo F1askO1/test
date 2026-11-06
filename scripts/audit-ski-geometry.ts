@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {
   displayGeometry,
   displayPaths,
+  generalizeDisplay,
   closedContour,
   geometrySeparation,
 } from "../shared/ski-display.js";
@@ -107,6 +108,27 @@ console.log(
     {
       resort: bundle.resort.id,
       sourceObjects: lines.length,
+      sourceRoles: {
+        boundaries: lines.filter((l) => l.geometryRole === "area-boundary")
+          .length,
+        centerlinePistes: lines.filter(
+          (l) => l.kind === "piste" && l.geometryRole === "centerline",
+        ).length,
+      },
+      confirmedAreas: bundle.areas?.map((a) => ({
+        id: a.id,
+        name: a.name,
+        rings: a.rings.length,
+        complete: a.complete,
+        sourceWays: a.sources.length,
+      })),
+      lod: [12, 13, 15, 17].map((zoom) => ({
+        zoom,
+        vertices: generalizeDisplay(
+          displayPaths(display.segments),
+          zoom,
+        ).reduce((n, p) => n + p.coordinates.length, 0),
+      })),
       pistes: bundle.resort.pistes,
       lifts: bundle.resort.lifts,
       repeatedIds: lines

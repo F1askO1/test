@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { analyze, type Point, type Analysis } from "../../shared/track";
 import type { SkiLine } from "../../shared/ski";
-export function useAnalysis(points: Point[], lines: SkiLine[] = []) {
+export function useAnalysis(
+  points: Point[],
+  lines: SkiLine[] = [],
+  areas?: import("../../shared/ski-areas").SkiArea[],
+) {
   const [analysis, setAnalysis] = useState<Analysis>(() => analyze([]));
   const seq = useRef(0),
     worker = useRef<Worker | null>(null),
     busy = useRef(false),
-    pending = useRef<{ id: number; points: Point[]; lines: SkiLine[] } | null>(
-      null,
-    );
+    pending = useRef<{
+      id: number;
+      points: Point[];
+      lines: SkiLine[];
+      areas?: import("../../shared/ski-areas").SkiArea[];
+    } | null>(null);
   useEffect(() => {
     const w = new Worker(new URL("./analysis.worker.ts", import.meta.url), {
       type: "module",
@@ -38,12 +45,12 @@ export function useAnalysis(points: Point[], lines: SkiLine[] = []) {
       pending.current = null;
       return;
     }
-    const job = { id, points, lines };
+    const job = { id, points, lines, areas };
     if (busy.current) pending.current = job;
     else if (worker.current) {
       busy.current = true;
       worker.current.postMessage(job);
     }
-  }, [points, lines]);
+  }, [points, lines, areas]);
   return analysis;
 }

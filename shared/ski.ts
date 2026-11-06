@@ -7,6 +7,7 @@ export type SkiLine = {
   coordinates: Coord[];
   difficulty: string | null;
   // Optional provenance in new imports; old packages remain readable.
+  geometryRole?: "centerline" | "area-boundary";
   osmTags?: Record<string, string>;
   routeRelations?: { id: string; difficulty: string | null; name: string }[];
   liftType?: string;
@@ -35,6 +36,7 @@ export type Resort = {
   association?: "search-window" | "source-membership" | "proximity";
 };
 export type SkiBundle = {
+  areas?: import("./ski-areas.js").SkiArea[];
   resort: Resort;
   lines: SkiLine[];
   attribution: string;
@@ -121,6 +123,7 @@ export function matchPiste(points: Point[], lines: SkiLine[]) {
     .filter(
       (l) =>
         l.kind === "piste" &&
+        l.geometryRole !== "area-boundary" &&
         l.osmTags?.area !== "yes" &&
         (l.osmTags?.area === "no" ||
           l.coordinates[0][0] !== l.coordinates.at(-1)![0] ||

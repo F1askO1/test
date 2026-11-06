@@ -48,8 +48,10 @@ export function saveSession(
     if (existing.user_id !== user) throw new Error("Идентификатор уже занят");
     return getSession(db, user, data.id);
   }
+  const mapBundle = data.skiResortId ? skiBundle(data.skiResortId) : undefined;
   const a = analyze(data.points, {
-    lines: data.skiResortId ? skiBundle(data.skiResortId)?.lines : undefined,
+    lines: mapBundle?.lines,
+    areas: mapBundle?.areas,
   });
   if (a.points.length < 2 || a.duration <= 0)
     throw new Error("Недостаточно пригодных GPS-данных");

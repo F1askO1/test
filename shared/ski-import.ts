@@ -1,3 +1,4 @@
+import { assembleRings, type SkiArea } from "./ski-areas.js";
 import { inside, geometryIssues, type ResortTarget } from "./ski-quality.js";
 import {
   lineLength,
@@ -48,6 +49,9 @@ export function normalizeOverpass(
   if (rawElements.length !== elements.length)
     throw Error("Некорректный OSM ID/type");
   if (elements.length > 200000) throw Error("Слишком много объектов");
+  const originalById = new Map(
+    rawElements.map((e) => [e.type + ":" + e.id, e]),
+  );
   const parents = new Map<number, Element[]>();
   for (const e of elements)
     if (
@@ -259,7 +263,14 @@ export function normalizeOverpass(
         ) || `${isPiste ? "Трасса" : "Подъёмник"} OSM ${e.id}`,
       kind: isPiste ? "piste" : "lift",
       coordinates: cs,
-      osmTags: { ...t },
+      geometryRole:
+        t.area === "yes" ||
+        (parents.get(e.id) ?? []).some((p) => p.tags?.type === "multipolygon")
+          ? "area-boundary"
+          : "centerline",
+      osmTags: {
+        ...(originalById.get(e.type + ":" + e.id)?.tags ?? {}),
+      },
       routeRelations: (parents.get(e.id) ?? []).map((p) => ({
         id: `relation-${p.id}`,
         difficulty: p.tags?.["piste:difficulty"] ?? null,
@@ -319,6 +330,68 @@ export function normalizeOverpass(
     ];
     bundles[0].resort.bbox = b;
     bundles[0].resort.center = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+  }
+  const wayCoordinates = new Map(
+    rawElements
+      .filter((e) => e.type === "way")
+      .map((e) => [
+        e.id,
+        (e.geometry ?? []).map(coordinate).filter((c): c is Coord => !!c),
+      ]),
+  );
+  for (const bundle of bundles) {
+    const ids = new Set(bundle.lines.map((l) => l.id)),
+      areas: SkiArea[] = [];
+    for (const r of rawElements.filter(
+      (e) =>
+        e.type === "relation" &&
+        e.tags?.type === "multipolygon" &&
+        e.tags?.["piste:type"] === "downhill",
+    )) {
+      const members = (r.members ?? []).filter((m) => m.type === "way");
+      if (!members.some((m) => ids.has("way-" + m.ref))) continue;
+      const outer = assembleRings(
+        members
+          .filter((m) => m.role !== "inner")
+          .map((m) => wayCoordinates.get(m.ref) ?? [])
+          .filter((cs) => cs.length >= 2),
+      );
+      const inner = assembleRings(
+        members
+          .filter((m) => m.role === "inner")
+          .map((m) => wayCoordinates.get(m.ref) ?? [])
+          .filter((cs) => cs.length >= 2),
+      );
+      const missing = members.some((m) => !wayCoordinates.has(m.ref));
+      areas.push({
+        id: "relation-" + r.id,
+        name:
+          clean(r.tags?.name || r.tags?.["piste:name"]) ||
+          "Площадь OSM " + r.id,
+        difficulty: r.tags?.["piste:difficulty"] ?? null,
+        grooming: r.tags?.["piste:grooming"],
+        rings: [...outer.rings, ...inner.rings],
+        sources: members.map((m) => "way-" + m.ref),
+        complete:
+          !missing &&
+          !outer.incomplete &&
+          !inner.incomplete &&
+          outer.rings.length > 0,
+      });
+    }
+    for (const l of bundle.lines.filter((l) => l.osmTags?.area === "yes")) {
+      const assembled = assembleRings([l.coordinates]);
+      areas.push({
+        id: l.id,
+        name: l.name,
+        difficulty: l.difficulty,
+        grooming: l.osmTags?.["piste:grooming"],
+        rings: assembled.rings,
+        sources: [l.id],
+        complete: assembled.rings.length > 0,
+      });
+    }
+    bundle.areas = areas;
   }
   const catalog: SkiCatalog = {
     version: 1,

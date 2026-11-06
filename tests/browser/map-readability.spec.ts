@@ -24,6 +24,56 @@ for (const [width, height] of [
     expect(bundle.resort.pistes).toBe(136);
     expect(bundle.resort.lifts).toBe(13);
     expect(bundle.resort.classified).toBe(131);
+    const snapshot = async (options: {
+      path: string;
+      animations: "disabled";
+    }) => {
+      await expect(
+        page.locator(".leaflet-container.leaflet-zoom-anim"),
+      ).toHaveCount(0);
+      let last = "",
+        stable = 0;
+      await expect
+        .poll(
+          async () => {
+            const state = await page
+              .locator(".ski-map")
+              .evaluate((el) => ({
+                view: (el as HTMLElement).dataset.mapView,
+                transform: (
+                  el.querySelector(".leaflet-map-pane") as HTMLElement
+                )?.style.transform,
+                tile: (el as HTMLElement).dataset.tileState,
+                pending: (el as HTMLElement).dataset.tilePending,
+              }));
+            const signature = JSON.stringify(state),
+              settled =
+                process.env.SLOPEMATE_MAP_OFFLINE === "1"
+                  ? state.tile === "unavailable" && state.pending === "0"
+                  : state.tile !== "loading";
+            stable = settled && signature === last ? stable + 1 : 0;
+            last = signature;
+            return stable;
+          },
+          { intervals: [150, 150, 150] },
+        )
+        .toBeGreaterThanOrEqual(2);
+      await page.screenshot(options);
+      fs.writeFileSync(
+        options.path + ".json",
+        JSON.stringify(
+          await page.locator(".ski-map").evaluate((el) => ({
+            state: { ...(el as HTMLElement).dataset },
+            viewport: el
+              .querySelector(".map")!
+              .getBoundingClientRect()
+              .toJSON(),
+          })),
+          null,
+          2,
+        ),
+      );
+    };
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     await page.setViewportSize({ width, height });
@@ -68,7 +118,7 @@ for (const [width, height] of [
     await expect(page.locator(".leaflet-control-attribution")).toContainText(
       "OpenStreetMap",
     );
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/overview.png`,
       animations: "disabled",
     });
@@ -78,7 +128,7 @@ for (const [width, height] of [
     await expect(info.locator(".resort-info-stats")).toContainText("136");
     await expect(info.locator(".resort-info-stats")).toContainText("13");
     await expect(info.locator(".resort-info-stats")).toContainText("131");
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/resort-info.png`,
       animations: "disabled",
     });
@@ -91,7 +141,7 @@ for (const [width, height] of [
       .getByRole("button", { name: "Приблизить", exact: true })
       .click({ clickCount: 2, delay: 180 });
     await page.waitForTimeout(400);
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/zoomed.png`,
       animations: "disabled",
     });
@@ -99,7 +149,7 @@ for (const [width, height] of [
     await page.getByRole("button", { name: "Слои", exact: true }).click();
     await page.getByLabel("Исходные линии OSM (диагностика)").check();
     await page.getByRole("button", { name: "Готово", exact: true }).click();
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/geometry-before.png`,
       animations: "disabled",
     });
@@ -116,9 +166,9 @@ for (const [width, height] of [
     );
     await expect(page.locator(".ski-map")).toHaveAttribute(
       "data-display-segments",
-      "1273",
+      bundle.areas?.length ? "644" : "1273",
     );
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/geometry-after.png`,
       animations: "disabled",
     });
@@ -142,7 +192,7 @@ for (const [width, height] of [
     await expect(
       page.getByRole("region", { name: "Карточка объекта карты" }),
     ).toContainText(piste.name);
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/selected-piste.png`,
       animations: "disabled",
     });
@@ -200,12 +250,41 @@ for (const [width, height] of [
     await page.getByLabel("Подъёмники и станции").uncheck();
     await expect(page.getByLabel("Подъёмники и станции")).not.toBeChecked();
     await page.getByLabel("Подъёмники и станции").check();
-    await page.screenshot({
+    await snapshot({
       path: `artifacts/map-readability/${width}/layers.png`,
       animations: "disabled",
     });
     await page.getByRole("button", { name: "Готово", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    if (width === 390 && bundle.areas?.length) {
+      await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
+      await page.getByLabel("Курорт или трасса").fill("Домбайская поляна");
+      await page
+        .getByRole("button", { name: "⌁ Домбайская поляна", exact: true })
+        .first()
+        .click();
+      await page.getByRole("button", { name: "Закрыть: Трасса" }).click();
+      await page.waitForTimeout(400);
+      await snapshot({
+        path: "artifacts/map-readability/390/junction.png",
+        animations: "disabled",
+      });
+      await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
+      await page.getByLabel("Курорт или трасса").fill("Сулахат");
+      await page
+        .getByRole("button", { name: "▱ Сулахат · площадь", exact: true })
+        .click();
+      await expect(
+        page.getByRole("dialog", { name: "Площадная трасса", exact: true }),
+      ).toContainText("не набор осевых маршрутов");
+      await snapshot({
+        path: "artifacts/map-readability/390/area.png",
+        animations: "disabled",
+      });
+      await page
+        .getByRole("button", { name: "Закрыть: Площадная трасса" })
+        .click();
+    }
     if (width === 375) {
       await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
       await page.getByLabel("Курорт", { exact: true }).selectOption("");

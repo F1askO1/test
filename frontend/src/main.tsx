@@ -176,6 +176,7 @@ function Workspace({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
   const current = useAnalysis(
     rec.draft?.points ?? EMPTY_POINTS,
     ski.bundle?.lines ?? EMPTY_LINES,
+    ski.bundle?.areas,
   );
   const liftMatch = useMemo(
     () =>

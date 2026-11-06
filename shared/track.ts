@@ -61,7 +61,10 @@ const median = (a: number[]) => {
 };
 export function analyze(
   input: Point[],
-  context: { lines?: SkiLine[] } = {},
+  context: {
+    lines?: SkiLine[];
+    areas?: import("./ski-areas.js").SkiArea[];
+  } = {},
 ): Analysis {
   const nearby = lineIndex(context.lines ?? []);
   const base = legacy(input, true);
@@ -238,6 +241,11 @@ export function analyze(
     liftSeconds,
     pisteMatches: [...matches.values()],
   };
-  result.terrain = terrainAnalysis(result, context.lines ?? []);
+  result.terrain = terrainAnalysis(
+    result,
+    context.lines ?? [],
+    undefined,
+    context.areas,
+  );
   return result;
 }

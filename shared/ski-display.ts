@@ -20,7 +20,10 @@ export type DisplaySegment = {
 };
 export function displayGeometry(lines: SkiLine[]) {
   const segments = new Map<string, DisplaySegment>();
-  const contours = lines.filter(closedContour);
+  const boundaries = lines.filter((l) => l.geometryRole === "area-boundary");
+  const contours = lines.filter(
+    (l) => closedContour(l) && !boundaries.includes(l),
+  );
   const grid = new Map<string, Map<string, Coord>>(),
     cellSize = 0.001;
   for (const l of lines)
@@ -57,7 +60,10 @@ export function displayGeometry(lines: SkiLine[]) {
     return result;
   };
   // Process contours last: their shared edges annotate centerlines, never add a second stroke.
-  for (const line of [...lines.filter((l) => !closedContour(l)), ...contours]) {
+  for (const line of [
+    ...lines.filter((l) => !closedContour(l) && !boundaries.includes(l)),
+    ...contours,
+  ]) {
     for (let i = 1; i < line.coordinates.length; i++) {
       const a = line.coordinates[i - 1],
         b = line.coordinates[i];
@@ -87,7 +93,7 @@ export function displayGeometry(lines: SkiLine[]) {
           k = line.kind + ":" + key(cs[0], cs[1]);
         let s = segments.get(k);
         if (!s) {
-          if (closedContour(line)) continue;
+          if (closedContour(line) || boundaries.includes(line)) continue;
           s = { coordinates: cs, sources: [], conflict: false };
           segments.set(k, s);
         }
@@ -178,4 +184,77 @@ export function displayPaths(segments: DisplaySegment[]): DisplaySegment[] {
     });
   }
   return result;
+}
+// Screen-space simplification uses only existing source vertices. Endpoints,
+// shared junctions, lifts and shared/conflicting segments are locked.
+export function generalizeDisplay(
+  paths: DisplaySegment[],
+  zoom: number,
+): DisplaySegment[] {
+  const owners = new Map<string, Set<number>>();
+  paths.forEach((p, i) =>
+    p.coordinates.forEach((c) => {
+      const k = c.join(",");
+      if (!owners.has(k)) owners.set(k, new Set());
+      owners.get(k)!.add(i);
+    }),
+  );
+  const tolerance = zoom < 14 ? 1.1 : zoom < 16 ? 0.55 : 0.18;
+  const pixel = (c: Coord) => {
+    const s = Math.sin((c[1] * Math.PI) / 180),
+      k = 256 * 2 ** zoom;
+    return [
+      ((c[0] + 180) / 360) * k,
+      (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * k,
+    ];
+  };
+  const simplify = (cs: Coord[]) => {
+    const keep = new Set([0, cs.length - 1]),
+      stack: [number, number][] = [[0, cs.length - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop()!,
+        p = pixel(cs[a]),
+        q = pixel(cs[b]);
+      let far = tolerance,
+        index = -1;
+      for (let i = a + 1; i < b; i++) {
+        const r = pixel(cs[i]),
+          dx = q[0] - p[0],
+          dy = q[1] - p[1],
+          f = Math.max(
+            0,
+            Math.min(
+              1,
+              ((r[0] - p[0]) * dx + (r[1] - p[1]) * dy) /
+                (dx * dx + dy * dy || 1),
+            ),
+          ),
+          d = Math.hypot(r[0] - p[0] - dx * f, r[1] - p[1] - dy * f);
+        if (d > far) {
+          far = d;
+          index = i;
+        }
+      }
+      if (index >= 0) {
+        keep.add(index);
+        stack.push([a, index], [index, b]);
+      }
+    }
+    return cs.filter((_, i) => keep.has(i));
+  };
+  return paths.map((path) => {
+    if (path.sources[0].kind === "lift" || path.sources.length > 1) return path;
+    const coordinates: Coord[] = [];
+    let start = 0;
+    for (let i = 1; i < path.coordinates.length; i++)
+      if (
+        i === path.coordinates.length - 1 ||
+        owners.get(path.coordinates[i].join(","))!.size > 1
+      ) {
+        const chunk = simplify(path.coordinates.slice(start, i + 1));
+        coordinates.push(...(coordinates.length ? chunk.slice(1) : chunk));
+        start = i;
+      }
+    return { ...path, coordinates };
+  });
 }
