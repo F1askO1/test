@@ -1,7 +1,11 @@
 import { expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 // This helper NEVER fulfills tile requests. Actual provider responses are required.
-export async function waitForFullTerrain(page: Page, file: string) {
+export async function waitForFullTerrain(
+  page: Page,
+  file: string,
+  provider: "topo" | "clean" = "topo",
+) {
   await expect(
     page.locator(".leaflet-container.leaflet-zoom-anim"),
   ).toHaveCount(0);
@@ -28,7 +32,7 @@ export async function waitForFullTerrain(page: Page, file: string) {
             state.basemapProvider,
           ].join("|");
           const complete =
-            state.basemapProvider === "topo" &&
+            state.basemapProvider === provider &&
             state.tileState === "ready" &&
             Number(state.tileVisible) > 0 &&
             state.tileLoaded === state.tileVisible &&

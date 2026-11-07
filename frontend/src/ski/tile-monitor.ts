@@ -16,7 +16,7 @@ export class MonitoredTileLayer extends L.TileLayer {
 export function monitorTiles(
   map: L.Map,
   layer: L.TileLayer,
-  provider: "topo" | "osm",
+  provider: "topo" | "osm" | "clean",
   publish: (h: TileHealth) => void,
   failed: () => void,
 ) {

@@ -1,3 +1,17 @@
+import { containsArea } from "../../shared/ski-areas";
+import {
+  namedRoutes,
+  normalizedRouteName,
+  logicalRoutePaths,
+  generalizeLogicalRoutes,
+  dombayCatalogue,
+  type NamedRoute,
+} from "../../shared/named-routes";
+import {
+  cleanTopography,
+  escapeAttribution,
+  rasterSkiPolicy,
+} from "./ski/basemaps";
 import type { SkiArea } from "../../shared/ski-areas";
 import { monitorTiles, MonitoredTileLayer } from "./ski/tile-monitor";
 import {
@@ -63,6 +77,12 @@ export default function TrackMap({
     ),
     [retryToken, setRetryToken] = useState(0),
     [fallback, setFallback] = useState(false),
+    [mapMode, setMapMode] = useState<"main" | "osm">("main"),
+    [avoidDouble, setAvoidDouble] = useState(true),
+    [bakedPistes, setBakedPistes] = useState(false),
+    [forceOwnLifts, setForceOwnLifts] = useState(false),
+    [useClean, setUseClean] = useState(false),
+    [selectedRoute, setSelectedRoute] = useState<NamedRoute | null>(null),
     [rawGeometry, setRawGeometry] = useState(false),
     [selectedArea, setSelectedArea] = useState<SkiArea | null>(null),
     [sharedSources, setSharedSources] = useState<SkiLine[]>([]),
@@ -88,10 +108,73 @@ export default function TrackMap({
     bundle = ski?.bundle;
   const display = useMemo(() => displayGeometry(bundle?.lines ?? []), [bundle]);
   const paths = useMemo(() => displayPaths(display.segments), [display]);
-  const visualPaths = useMemo(
-    () => generalizeDisplay(paths, zoom),
-    [paths, zoom],
+  const routes = useMemo(() => (bundle ? namedRoutes(bundle) : []), [bundle]);
+  const confirmedRoutes = routes.filter((r) => r.status === "osm-name-match");
+  const mainMode = mapMode === "main" && routes.length > 0;
+  const activeClean = terrain && useClean && !!cleanTopography;
+  const rasterPolicy = rasterSkiPolicy(
+    terrain,
+    activeClean,
+    avoidDouble,
+    bakedPistes,
+    zoom,
   );
+  const suppressSki = rasterPolicy.pistes;
+  const suppressLifts = rasterPolicy.lifts && !forceOwnLifts;
+  const bakedLift = (l: SkiLine) =>
+    suppressLifts ||
+    (!forceOwnLifts &&
+      rasterPolicy.gondolas &&
+      ["gondola", "cable_car"].includes(l.liftType ?? ""));
+  const visualPaths = useMemo(
+    () =>
+      mainMode
+        ? generalizeLogicalRoutes(
+            logicalRoutePaths(display.segments, routes),
+            routes,
+            zoom,
+          )
+        : generalizeDisplay(paths, zoom),
+    [mainMode, display, paths, routes, zoom],
+  );
+  const groupsFor = (sources: SkiLine[]) =>
+    routes.filter((r) =>
+      r.lineIds.some((id) => sources.some((s) => s.id === id)),
+    );
+  const chooseSources = (sources: SkiLine[]) => {
+    const groups = groupsFor(sources);
+    setSelectedArea(null);
+    setTerrainSegment(null);
+    setChooser(false);
+    if (mainMode && groups.length === 1) {
+      setSelected(null);
+      setSelectedRoute(groups[0]);
+    } else {
+      setSelectedRoute(null);
+      setSharedSources(sources);
+      setSelected(sources[0]);
+    }
+  };
+  const openRoute = (route: NamedRoute) => {
+    setSelected(null);
+    setSelectedArea(null);
+    setSelectedRoute(route);
+    setChooser(false);
+    setQuery("");
+    const cs = [
+      ...(bundle?.lines
+        .filter((l) => route.lineIds.includes(l.id))
+        .flatMap((l) => l.coordinates) ?? []),
+      ...(bundle?.areas
+        ?.filter((a) => route.areaIds.includes(a.id))
+        .flatMap((a) => a.rings.flat()) ?? []),
+    ];
+    if (cs.length)
+      map.current?.fitBounds(L.latLngBounds(cs.map(latlng)), {
+        padding: [35, 35],
+        maxZoom: 16,
+      });
+  };
   useEffect(() => {
     if (!ref.current) return;
     const m = L.map(ref.current, {
@@ -149,29 +232,42 @@ export default function TrackMap({
     if (!m) return;
     base.current?.remove();
     setTileFailed(false);
-    m.setMaxZoom(terrain ? 17 : 19);
+    m.setMaxZoom(
+      activeClean ? cleanTopography!.maxNativeZoom : terrain ? 17 : 19,
+    );
     const retina = window.devicePixelRatio > 1,
-      providerMax = terrain ? 17 : 19;
+      providerMax = activeClean
+        ? cleanTopography!.maxNativeZoom
+        : terrain
+          ? 17
+          : 19;
     const tiles = new MonitoredTileLayer(
-      terrain
-        ? "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
-        : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      activeClean
+        ? cleanTopography!.url
+        : terrain
+          ? "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png"
+          : "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
       {
         maxZoom: providerMax,
         maxNativeZoom: providerMax - (retina ? 1 : 0),
         tileSize: retina ? 128 : 256,
         zoomOffset: retina ? 1 : 0,
         detectRetina: false,
-        attribution: terrain
-          ? '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
-          : '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        attribution: activeClean
+          ? escapeAttribution(cleanTopography!.attribution) +
+            ' | <a href="' +
+            escapeAttribution(cleanTopography!.licenseUrl) +
+            '">Лицензия</a>'
+          : terrain
+            ? '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'
+            : '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       },
     );
     base.current = tiles;
     const stop = monitorTiles(
       m,
       tiles,
-      terrain ? "topo" : "osm",
+      activeClean ? "clean" : terrain ? "topo" : "osm",
       (status) => {
         setTileStatus(status);
         setTileFailed(
@@ -189,7 +285,7 @@ export default function TrackMap({
       stop();
       tiles.remove();
     };
-  }, [terrain, retryToken]);
+  }, [terrain, retryToken, activeClean]);
   useEffect(() => {
     const m = map.current,
       g = features.current;
@@ -211,7 +307,10 @@ export default function TrackMap({
     }
     const visible = bundle.lines.filter(
       (l) =>
-        !((l.kind === "piste" && !pistes) || (l.kind === "lift" && !lifts)),
+        !(
+          (l.kind === "piste" && (!pistes || suppressSki)) ||
+          (l.kind === "lift" && (!lifts || bakedLift(l)))
+        ),
     );
     // Reuse renderers across zoom/state changes. Removing Canvas during a
     // Leaflet zoom callback can leave a pending redraw with a destroyed context.
@@ -223,10 +322,19 @@ export default function TrackMap({
     ) => {
       const l = sources[0];
       if (!visible.includes(l)) return;
-      const style = conflict
-        ? { ...skiLineStyle(l, zoom), color: "#626674", dashArray: "2 3" }
-        : skiLineStyle(l, zoom);
-      const halo = conflict ? null : skiHaloStyle(l, zoom);
+      const pathGroups = mainMode ? groupsFor(sources) : [];
+      const context = mainMode && l.kind === "piste" && pathGroups.length === 0;
+      const style = context
+        ? {
+            ...skiLineStyle(l, zoom),
+            color: "#68737f",
+            weight: zoom >= 16 ? 0.9 : 0.65,
+            opacity: 0.38,
+          }
+        : conflict
+          ? { ...skiLineStyle(l, zoom), color: "#626674", dashArray: "2 3" }
+          : skiLineStyle(l, zoom);
+      const halo = conflict || context ? null : skiHaloStyle(l, zoom);
       if (halo)
         L.polyline(coordinates.map(latlng), {
           ...halo,
@@ -240,18 +348,18 @@ export default function TrackMap({
           textLabel(
             conflict
               ? "Общий участок: конфликт сложности"
-              : sources.map((l) => l.name).join(" / "),
+              : pathGroups.length
+                ? pathGroups.map((r) => r.name).join(" / ")
+                : sources.map((l) => l.name).join(" / "),
           ),
           { sticky: true },
         )
         .on("click", () => {
-          setSharedSources(sources);
-          setSelected(l);
-          setChooser(false);
+          chooseSources(sources);
         })
         .addTo(g);
     };
-    if (!rawGeometry && pistes)
+    if (!rawGeometry && pistes && !suppressSki)
       for (const area of bundle.areas ?? []) {
         if (!area.complete) continue;
         L.polygon(
@@ -259,8 +367,16 @@ export default function TrackMap({
           {
             renderer: renderers.piste,
             stroke: false,
-            fillColor: pisteColor(area.difficulty),
-            fillOpacity: 0.085,
+            fillColor:
+              mainMode &&
+              !confirmedRoutes.some((r) => r.areaIds.includes(area.id))
+                ? "#798594"
+                : pisteColor(area.difficulty),
+            fillOpacity:
+              mainMode &&
+              !confirmedRoutes.some((r) => r.areaIds.includes(area.id))
+                ? 0.025
+                : 0.085,
             fillRule: "evenodd",
           },
         )
@@ -294,7 +410,7 @@ export default function TrackMap({
     }
     if (!rawGeometry)
       visualPaths.forEach((s) => draw(s.coordinates, s.sources, s.conflict));
-    if (lifts && showStations(zoom)) {
+    if (lifts && !suppressLifts && showStations(zoom)) {
       const seen = new Set<string>();
       for (const l of visible.filter((l) => l.kind === "lift"))
         for (const station of l.stations) {
@@ -317,7 +433,7 @@ export default function TrackMap({
             .addTo(g);
         }
     }
-    if (selected && visible.some((l) => l.id === selected.id)) {
+    if (selected && bundle.lines.some((l) => l.id === selected.id)) {
       const cs = selected.coordinates.map(latlng),
         halo = skiHaloStyle(selected, zoom, true);
       if (halo)
@@ -327,6 +443,36 @@ export default function TrackMap({
         interactive: false,
         renderer: renderers.selection,
       }).addTo(g);
+    }
+    if (selectedRoute) {
+      for (const line of bundle.lines.filter((l) =>
+        selectedRoute.lineIds.includes(l.id),
+      )) {
+        const halo = skiHaloStyle(line, zoom, true);
+        if (halo)
+          L.polyline(line.coordinates.map(latlng), {
+            ...halo,
+            renderer: renderers.selection,
+          }).addTo(g);
+        L.polyline(line.coordinates.map(latlng), {
+          ...skiLineStyle(line, zoom, true),
+          renderer: renderers.selection,
+          interactive: false,
+        }).addTo(g);
+      }
+      for (const area of (bundle.areas ?? []).filter((a) =>
+        selectedRoute.areaIds.includes(a.id),
+      ))
+        L.polygon(
+          area.rings.map((r) => r.map(latlng)),
+          {
+            renderer: renderers.selection,
+            stroke: false,
+            fillColor: pisteColor(area.difficulty),
+            fillOpacity: 0.14,
+            interactive: false,
+          },
+        ).addTo(g);
     }
     return () => {
       g.clearLayers();
@@ -344,6 +490,13 @@ export default function TrackMap({
     paths,
     visualPaths,
     rawGeometry,
+    mainMode,
+    routes,
+    suppressSki,
+    suppressLifts,
+    rasterPolicy.gondolas,
+    forceOwnLifts,
+    selectedRoute,
   ]);
 
   useEffect(() => {
@@ -517,6 +670,7 @@ export default function TrackMap({
           }))
           .sort((a, b) => a.distance - b.distance);
         if (matches[0]?.distance <= tolerance) {
+          setSelectedRoute(null);
           setSelectedArea(null);
           setSelected(null);
           setTerrainSegment(matches[0].segment);
@@ -533,18 +687,30 @@ export default function TrackMap({
         .sort((a, b) => a.distance - b.distance);
       if (candidates[0]?.distance <= tolerance) {
         const sources = candidates[0].path.sources;
-        setSelectedArea(null);
-        setTerrainSegment(null);
-        setSharedSources(sources);
-        setSelected(sources[0]);
-        setChooser(false);
+        chooseSources(sources);
+        return;
+      }
+      if (pistes) {
+        const hits = (bundle?.areas ?? []).filter((a) =>
+          containsArea(point, a),
+        );
+        const area =
+          hits.find((a) =>
+            confirmedRoutes.some((r) => r.areaIds.includes(a.id)),
+          ) ?? hits[0];
+        if (area) {
+          setSelected(null);
+          setSelectedRoute(null);
+          setTerrainSegment(null);
+          setSelectedArea(area);
+        }
       }
     };
     m.on("click", click);
     return () => {
       m.off("click", click);
     };
-  }, [paths, pistes, lifts, myTrack]);
+  }, [paths, pistes, lifts, myTrack, mainMode, routes]);
   const locate = () => {
     const p = points.at(-1);
     if (live && p) {
@@ -595,7 +761,12 @@ export default function TrackMap({
       .filter(
         (l) =>
           l.geometryRole !== "area-boundary" &&
-          l.name.toLowerCase().includes(query.toLowerCase()),
+          (!mainMode ||
+            !routes.some((r) => r.lineIds.includes(l.id)) ||
+            query.includes(l.id.replace("way-", ""))) &&
+          (normalizedRouteName(l.name).includes(normalizedRouteName(query)) ||
+            l.id === query ||
+            l.id.replace("way-", "") === query),
       )
       .slice(0, 20) ?? [];
   const legend = (
@@ -622,7 +793,7 @@ export default function TrackMap({
       className={`ski-map ${large ? "ski-map-large" : ""}`}
       aria-label="Карта курорта"
       data-map-view={mapView}
-      data-basemap-provider={terrain ? "topo" : "osm"}
+      data-basemap-provider={activeClean ? "clean" : terrain ? "topo" : "osm"}
       data-tile-state={tileStatus.state}
       data-tile-loaded={tileStatus.loaded}
       data-tile-failed={tileStatus.failed}
@@ -631,6 +802,39 @@ export default function TrackMap({
       data-tile-coverage={tileStatus.coverage.toFixed(6)}
       data-display-segments={display.segments.length}
       data-source-lines={bundle?.lines.length ?? 0}
+      data-map-mode={mapMode}
+      data-named-routes={confirmedRoutes.length}
+      data-ski-overlay={suppressSki ? "raster-only" : "vectors"}
+      data-lift-overlay={
+        suppressLifts
+          ? "raster-only"
+          : !forceOwnLifts && rasterPolicy.gondolas
+            ? "mixed"
+            : "vectors"
+      }
+      data-render-paths={
+        visualPaths.filter((p) =>
+          p.sources[0].kind === "piste"
+            ? pistes && !suppressSki
+            : lifts && !bakedLift(p.sources[0]),
+        ).length
+      }
+      data-colored-piste-paths={
+        suppressSki || !pistes
+          ? 0
+          : rawGeometry
+            ? (bundle?.resort.pistes ?? 0)
+            : visualPaths.filter(
+                (p) =>
+                  p.sources[0].kind === "piste" &&
+                  (!mainMode || groupsFor(p.sources).length > 0),
+              ).length
+      }
+      data-render-areas={
+        suppressSki || !pistes || rawGeometry
+          ? 0
+          : (bundle?.areas?.filter((a) => a.complete).length ?? 0)
+      }
       data-geometry-mode={rawGeometry ? "raw" : "normalized"}
     >
       {ski && (
@@ -788,6 +992,31 @@ export default function TrackMap({
           </div>
           <div className="ski-results">
             {query &&
+              mainMode &&
+              confirmedRoutes
+                .filter((r) =>
+                  normalizedRouteName(r.name).includes(
+                    normalizedRouteName(query),
+                  ),
+                )
+                .map((r) => (
+                  <button key={r.id} onClick={() => openRoute(r)}>
+                    Маршрут: {r.name}
+                  </button>
+                ))}
+            {query &&
+              routes
+                .filter(
+                  (r) =>
+                    r.status === "unmatched" &&
+                    normalizedRouteName(r.name).includes(
+                      normalizedRouteName(query),
+                    ),
+                )
+                .map((r) => (
+                  <p key={r.id}>{r.name}: достоверная геометрия не найдена.</p>
+                ))}
+            {query &&
               lineResults.map((l) => (
                 <button
                   key={l.id}
@@ -831,6 +1060,14 @@ export default function TrackMap({
           {query &&
             !lineResults.length &&
             !resorts.length &&
+            !(
+              mainMode &&
+              routes.some((r) =>
+                normalizedRouteName(r.name).includes(
+                  normalizedRouteName(query),
+                ),
+              )
+            ) &&
             !(bundle?.areas ?? []).some((a) =>
               a.name.toLowerCase().includes(query.toLowerCase()),
             ) && (
@@ -842,17 +1079,36 @@ export default function TrackMap({
       )}
       {layers && (
         <MapSheet title="Слои карты" onClose={() => setLayers(false)}>
+          <label>
+            Режим карты
+            <select
+              aria-label="Режим карты"
+              value={mapMode}
+              onChange={(e) => {
+                setMapMode(e.target.value as "main" | "osm");
+                setSelected(null);
+                setSelectedRoute(null);
+                setRawGeometry(false);
+              }}
+            >
+              <option value="main">Основные трассы</option>
+              <option value="osm">Подробная карта OSM</option>
+            </select>
+          </label>
           <div className="map-layer-options">
             <label>
               <input
                 type="checkbox"
                 checked={terrain}
                 onChange={(e) => {
+                  setUseClean(false);
                   setFallback(false);
                   setTerrain(e.target.checked);
                 }}
               />
-              Рельеф OpenTopoMap
+              {activeClean
+                ? "Рельеф " + cleanTopography!.name
+                : "Рельеф OpenTopoMap"}
             </label>
             <label>
               <input
@@ -879,6 +1135,58 @@ export default function TrackMap({
               Мой трек
             </label>
           </div>
+          {cleanTopography && (
+            <button
+              onClick={() => {
+                setUseClean(true);
+                setTerrain(true);
+                setFallback(false);
+              }}
+            >
+              Чистая топография: {cleanTopography.name}
+            </button>
+          )}
+          <label className="fine">
+            <input
+              type="checkbox"
+              checked={avoidDouble}
+              onChange={(e) => setAvoidDouble(e.target.checked)}
+            />{" "}
+            Не дублировать лыжную схему OpenTopoMap
+          </label>
+          {mainMode && (
+            <p className="fine">
+              Дополнительные OSM-линии показаны тонким серым контекстом; их
+              сложность не изменена и доступна в подробном режиме или карточке.
+            </p>
+          )}
+          {terrain && !activeClean && (
+            <label className="fine">
+              <input
+                type="checkbox"
+                checked={forceOwnLifts}
+                onChange={(e) => setForceOwnLifts(e.target.checked)}
+              />{" "}
+              Наш слой подъёмников поверх подложки (сравнение)
+            </label>
+          )}
+          <label className="fine">
+            <input
+              type="checkbox"
+              checked={bakedPistes}
+              onChange={(e) => setBakedPistes(e.target.checked)}
+            />{" "}
+            Трассы уже нарисованы в подложке (после проверки)
+          </label>
+          {(suppressLifts || suppressSki) && (
+            <p className="fine">
+              Подъёмники берутся из растра OpenTopoMap.{" "}
+              {suppressSki
+                ? "Наш обычный слой трасс выключен; выбор имени подсветит привязку."
+                : "Наши трассы включены. Если сравнение тайлов подтвердит встроенные трассы, отметьте переключатель выше."}{" "}
+              Растр нельзя фильтровать по именам нашего каталога.
+            </p>
+          )}
           <label className="fine">
             <input
               type="checkbox"
@@ -902,17 +1210,38 @@ export default function TrackMap({
           {bundle ? (
             <>
               <h3>{bundle.resort.name}</h3>
-              <div className="resort-info-stats">
+              <div
+                className="resort-info-stats"
+                style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}
+              >
                 <span>
-                  <strong>{bundle.resort.pistes}</strong>OSM-участков
+                  <strong>{confirmedRoutes.length}</strong>имён подтверждено в
+                  OSM
+                </span>
+                <span>
+                  <strong>
+                    {
+                      bundle.lines.filter(
+                        (l) =>
+                          l.kind === "piste" &&
+                          l.geometryRole !== "area-boundary",
+                      ).length
+                    }
+                  </strong>
+                  линейных OSM-сегментов
+                </span>
+                <span>
+                  <strong>{bundle.areas?.length ?? 0}</strong>площадных зон
                 </span>
                 <span>
                   <strong>{bundle.resort.lifts}</strong>подъёмников
                 </span>
-                <span>
-                  <strong>{bundle.resort.classified}</strong>с классификацией
-                </span>
               </div>
+              <p className="fine">
+                Совпадение имени не подтверждает полную официальную геометрию.{" "}
+                {bundle.resort.classified} из {bundle.resort.pistes} исходных
+                лыжных OSM-объектов имеют сложность.
+              </p>
               <p className="fine">
                 Данные: {bundle.updatedAt.slice(0, 10)} · {bundle.resort.region}
               </p>
@@ -942,6 +1271,51 @@ export default function TrackMap({
                   </>
                 )}
               </p>
+              {!!routes.length && (
+                <details>
+                  <summary>Именованные маршруты и привязки</summary>
+                  {routes.map((r) => (
+                    <p key={r.id}>
+                      {r.name}:{" "}
+                      {r.status === "unmatched"
+                        ? "нет достоверной привязки"
+                        : r.lineIds.length +
+                          " линейных частей, " +
+                          r.areaIds.length +
+                          " площадей; " +
+                          r.components +
+                          " связных компонентов. Подтверждено только имя OSM."}
+                    </p>
+                  ))}
+                  <a
+                    href={dombayCatalogue.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Каталог курорта
+                  </a>
+                </details>
+              )}
+              {!!bundle.areas?.length && (
+                <details>
+                  <summary>Площадные зоны OSM</summary>
+                  {bundle.areas
+                    .filter((a) => a.complete)
+                    .map((a) => (
+                      <button
+                        key={a.id}
+                        onClick={() => {
+                          setInfo(false);
+                          setSelected(null);
+                          setSelectedRoute(null);
+                          setSelectedArea(a);
+                        }}
+                      >
+                        Площадь: {a.name}
+                      </button>
+                    ))}
+                </details>
+              )}
               {legend}
               <p>
                 Открытые данные OSM. Полнота и текущее открытие трасс не
@@ -971,8 +1345,13 @@ export default function TrackMap({
             </>
           )}
           <p className="fine">
-            Подложка: {terrain ? "OpenTopoMap" : "OpenStreetMap"} ·{" "}
-            {tileStatus.state} · загружено {tileStatus.loaded}, ошибок{" "}
+            Подложка:{" "}
+            {activeClean
+              ? cleanTopography!.name
+              : terrain
+                ? "OpenTopoMap"
+                : "OpenStreetMap"}{" "}
+            · {tileStatus.state} · загружено {tileStatus.loaded}, ошибок{" "}
             {tileStatus.failed}.{" "}
             {fallback
               ? "Включён резерв; он не содержит топографического рельефа."
@@ -1027,6 +1406,58 @@ export default function TrackMap({
             настоящую трассу. Это не официальный маршрут и не оценка
             безопасности склона.
           </p>
+        </MapSheet>
+      )}
+      {selectedRoute && (
+        <MapSheet
+          title="Именованная трасса"
+          onClose={() => setSelectedRoute(null)}
+        >
+          <h3>{selectedRoute.name}</h3>
+          <p>
+            Привязка по имени OSM. Полная официальная геометрия не подтверждена.
+          </p>
+          <p>
+            {selectedRoute.lineIds.length} линейных частей ·{" "}
+            {selectedRoute.areaIds.length} площадей · {selectedRoute.components}{" "}
+            связных компонентов линий.
+          </p>
+          <p>
+            Сложность OSM:{" "}
+            {selectedRoute.difficulties
+              .map((d) => difficultyLabels[d] ?? d)
+              .join(" / ")}
+            . Различающиеся теги не заменяются одним значением.
+          </p>
+          <p className="fine">
+            Раздельные компоненты не соединены искусственными отрезками. Площадь
+            не превращена в осевой маршрут. Это не подтверждение открытия или
+            безопасности.
+          </p>
+          <details>
+            <summary>Исходные OSM-объекты</summary>
+            {[...selectedRoute.lineIds, ...selectedRoute.areaIds].map((id) => (
+              <p key={id}>
+                <a
+                  href={
+                    "https://www.openstreetmap.org/" +
+                    id.replace("way-", "way/").replace("relation-", "relation/")
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {id}
+                </a>
+              </p>
+            ))}
+          </details>
+          <a
+            href={dombayCatalogue.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Каталог курорта
+          </a>
         </MapSheet>
       )}
       {selectedArea && (

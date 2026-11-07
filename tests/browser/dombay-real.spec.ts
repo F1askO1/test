@@ -112,6 +112,9 @@ test("REAL DATA ONLY: Dombay source pistes, lifts and actual terrain tiles", asy
       fullPage: false,
       animations: "disabled",
     });
+    await page.getByRole("button", { name: "Слои", exact: true }).click();
+    await page.getByLabel("Режим карты").selectOption("osm");
+    await page.getByRole("button", { name: "Готово", exact: true }).click();
     const junction = bundle.lines.find(
       (l: any) =>
         l.kind === "piste" &&

@@ -1,0 +1,540 @@
+{
+  "catalogue": {
+    "url": "https://dombai-kd.ru/karta-trass/",
+    "basis": "user-provided-list",
+    "names": [
+      "Мусса — Ачитара",
+      "Домбайская поляна",
+      "Сулахат",
+      "Старый Домбай",
+      "Домбай 2",
+      "Аманауз",
+      "Солнечная",
+      "Лесная",
+      "Учебный склон",
+      "Поляна Лии"
+    ]
+  },
+  "officialPageIndependentlyRead": false,
+  "officialExtentConfirmed": false,
+  "sourceHashes": {
+    "package": "ac6dee16fe0a20c5a4e7ad4239b5593aa53a7b8cd0532ec4b93db09aa5dcba77",
+    "xml": "2e03fa6e580865de67aeb06799f9a4c5ac06cecace81e50a111736b13b73d3d0"
+  },
+  "counts": {
+    "matchedNames": 9,
+    "catalogueNames": 10,
+    "allLinearPisteSegments": 29,
+    "namedLineSegments": 14,
+    "contextLineSegments": 15,
+    "areas": 8,
+    "lifts": 13,
+    "allSourceObjects": 149
+  },
+  "mapping": [
+    {
+      "id": "dombay-catalogue-0",
+      "name": "Мусса — Ачитара",
+      "lineIds": [
+        "way-469940514"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "intermediate"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-469940514",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [],
+      "lines": [
+        {
+          "id": "way-469940514",
+          "difficulty": "intermediate",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-1",
+      "name": "Домбайская поляна",
+      "lineIds": [
+        "way-400416107",
+        "way-469940487",
+        "way-1273593119"
+      ],
+      "areaIds": [
+        "relation-20129615"
+      ],
+      "difficulties": [
+        "easy"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-400416107",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-469940487",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-1273593119",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "relation-20129615",
+          "fields": [
+            "area-name"
+          ],
+          "relationIds": [
+            "relation-20129615"
+          ]
+        }
+      ],
+      "nodeConnections": [
+        {
+          "left": "way-400416107",
+          "right": "way-469940487",
+          "nodeIds": [
+            4030020880
+          ]
+        },
+        {
+          "left": "way-400416107",
+          "right": "way-1273593119",
+          "nodeIds": [
+            4641974852
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "id": "way-400416107",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        },
+        {
+          "id": "way-469940487",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        },
+        {
+          "id": "way-1273593119",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": [
+        {
+          "id": "relation-20129615",
+          "difficulty": "easy",
+          "grooming": "classic",
+          "complete": true,
+          "rings": 1
+        }
+      ]
+    },
+    {
+      "id": "dombay-catalogue-2",
+      "name": "Сулахат",
+      "lineIds": [
+        "way-879140377",
+        "way-879140380"
+      ],
+      "areaIds": [
+        "way-879140376"
+      ],
+      "difficulties": [
+        "easy"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-879140377",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-879140380",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-879140376",
+          "fields": [
+            "area-name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [
+        {
+          "left": "way-879140377",
+          "right": "way-879140380",
+          "nodeIds": [
+            8178621608
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "id": "way-879140377",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        },
+        {
+          "id": "way-879140380",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": [
+        {
+          "id": "way-879140376",
+          "difficulty": "easy",
+          "grooming": "classic",
+          "complete": true,
+          "rings": 1
+        }
+      ]
+    },
+    {
+      "id": "dombay-catalogue-3",
+      "name": "Старый Домбай",
+      "lineIds": [
+        "way-879206898",
+        "way-1273593117"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "easy"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-879206898",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-1273593117",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [
+        {
+          "left": "way-879206898",
+          "right": "way-1273593117",
+          "nodeIds": [
+            3258764530
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "id": "way-879206898",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        },
+        {
+          "id": "way-1273593117",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-4",
+      "name": "Домбай 2",
+      "lineIds": [
+        "way-1273593116",
+        "way-1273593118"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "intermediate"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-1273593116",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "way-1273593118",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [
+        {
+          "left": "way-1273593116",
+          "right": "way-1273593118",
+          "nodeIds": [
+            8179184162
+          ]
+        }
+      ],
+      "lines": [
+        {
+          "id": "way-1273593116",
+          "difficulty": "intermediate",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        },
+        {
+          "id": "way-1273593118",
+          "difficulty": "intermediate",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-5",
+      "name": "Аманауз",
+      "lineIds": [
+        "way-856482456"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "intermediate"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-856482456",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [],
+      "lines": [
+        {
+          "id": "way-856482456",
+          "difficulty": "intermediate",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-6",
+      "name": "Солнечная",
+      "lineIds": [
+        "way-469940506"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "easy"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-469940506",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [],
+      "lines": [
+        {
+          "id": "way-469940506",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-7",
+      "name": "Лесная",
+      "lineIds": [
+        "way-1117972577"
+      ],
+      "areaIds": [
+        "relation-20129617"
+      ],
+      "difficulties": [
+        "easy",
+        "intermediate"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-1117972577",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        },
+        {
+          "id": "relation-20129617",
+          "fields": [
+            "area-name"
+          ],
+          "relationIds": [
+            "relation-20129617"
+          ]
+        }
+      ],
+      "nodeConnections": [],
+      "lines": [
+        {
+          "id": "way-1117972577",
+          "difficulty": "easy",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": "piste",
+          "relations": []
+        }
+      ],
+      "areas": [
+        {
+          "id": "relation-20129617",
+          "difficulty": "intermediate",
+          "grooming": "classic",
+          "complete": true,
+          "rings": 1
+        }
+      ]
+    },
+    {
+      "id": "dombay-catalogue-8",
+      "name": "Учебный склон",
+      "lineIds": [
+        "way-418460740"
+      ],
+      "areaIds": [],
+      "difficulties": [
+        "novice"
+      ],
+      "components": 1,
+      "status": "osm-name-match",
+      "extent": "not-operator-verified",
+      "evidence": [
+        {
+          "id": "way-418460740",
+          "fields": [
+            "name"
+          ],
+          "relationIds": []
+        }
+      ],
+      "nodeConnections": [],
+      "lines": [
+        {
+          "id": "way-418460740",
+          "difficulty": "novice",
+          "pisteType": "downhill",
+          "pisteRef": null,
+          "route": null,
+          "relations": []
+        }
+      ],
+      "areas": []
+    },
+    {
+      "id": "dombay-catalogue-9",
+      "name": "Поляна Лии",
+      "lineIds": [],
+      "areaIds": [],
+      "difficulties": [],
+      "components": 0,
+      "status": "unmatched",
+      "extent": "not-operator-verified",
+      "evidence": [],
+      "nodeConnections": [],
+      "lines": [],
+      "areas": []
+    }
+  ]
+}

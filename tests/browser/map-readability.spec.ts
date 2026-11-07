@@ -36,16 +36,13 @@ for (const [width, height] of [
       await expect
         .poll(
           async () => {
-            const state = await page
-              .locator(".ski-map")
-              .evaluate((el) => ({
-                view: (el as HTMLElement).dataset.mapView,
-                transform: (
-                  el.querySelector(".leaflet-map-pane") as HTMLElement
-                )?.style.transform,
-                tile: (el as HTMLElement).dataset.tileState,
-                pending: (el as HTMLElement).dataset.tilePending,
-              }));
+            const state = await page.locator(".ski-map").evaluate((el) => ({
+              view: (el as HTMLElement).dataset.mapView,
+              transform: (el.querySelector(".leaflet-map-pane") as HTMLElement)
+                ?.style.transform,
+              tile: (el as HTMLElement).dataset.tileState,
+              pending: (el as HTMLElement).dataset.tilePending,
+            }));
             const signature = JSON.stringify(state),
               settled =
                 process.env.SLOPEMATE_MAP_OFFLINE === "1"
@@ -92,6 +89,11 @@ for (const [width, height] of [
     await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
     await page.getByLabel("Курорт", { exact: true }).selectOption("ru-dombay");
     await expect(page.locator(".map-search-trigger")).toContainText("Домбай");
+    // These regressions inspect individual OSM source objects; the new default
+    // named mode has its own route-group interaction tests.
+    await page.getByRole("button", { name: "Слои", exact: true }).click();
+    await page.getByLabel("Режим карты").selectOption("osm");
+    await page.getByRole("button", { name: "Готово", exact: true }).click();
     await expect(page.locator("canvas")).not.toHaveCount(0);
     await page.waitForTimeout(350);
     const box = await page.locator(".map-wrap").boundingBox();
@@ -125,9 +127,10 @@ for (const [width, height] of [
     await page.getByRole("button", { name: "О курорте", exact: true }).click();
     const info = page.getByRole("dialog", { name: "О курорте", exact: true });
     await expect(info).toBeVisible();
-    await expect(info.locator(".resort-info-stats")).toContainText("136");
+    await expect(info.locator(".resort-info-stats")).toContainText("9");
+    await expect(info.locator(".resort-info-stats")).toContainText("29");
     await expect(info.locator(".resort-info-stats")).toContainText("13");
-    await expect(info.locator(".resort-info-stats")).toContainText("131");
+    await expect(info.locator(".resort-info-stats")).toContainText("8");
     await snapshot({
       path: `artifacts/map-readability/${width}/resort-info.png`,
       animations: "disabled",
@@ -257,6 +260,9 @@ for (const [width, height] of [
     await page.getByRole("button", { name: "Готово", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     if (width === 390 && bundle.areas?.length) {
+      await page.getByRole("button", { name: "Слои", exact: true }).click();
+      await page.getByLabel("Режим карты").selectOption("osm");
+      await page.getByRole("button", { name: "Готово", exact: true }).click();
       await page.getByRole("button", { name: "Поиск и выбор курорта" }).click();
       await page.getByLabel("Курорт или трасса").fill("Домбайская поляна");
       await page
