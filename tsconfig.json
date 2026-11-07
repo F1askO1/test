@@ -13,5 +13,5 @@
     "noEmit": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["frontend", "backend", "shared", "tests"]
+  "include": ["frontend", "backend", "shared", "tests", "scripts/**/*.ts"]
 }

@@ -1,0 +1,28 @@
+{
+  "offline": true,
+  "geometry": "real prepared user OSM package",
+  "state": {
+    "mapView": "43.2895768,41.6524315,15",
+    "basemapProvider": "osm",
+    "tileState": "unavailable",
+    "tileLoaded": "0",
+    "tileFailed": "24",
+    "tilePending": "0",
+    "tileVisible": "24",
+    "tileCoverage": "0.000000",
+    "displaySegments": "644",
+    "sourceLines": "149",
+    "mapMode": "main",
+    "namedRoutes": "9",
+    "skiOverlay": "vectors",
+    "liftOverlay": "vectors",
+    "renderPaths": "43",
+    "coloredPistePaths": "15",
+    "renderAreas": "8",
+    "geometryMode": "normalized"
+  },
+  "viewport": {
+    "width": 390,
+    "height": 844
+  }
+}

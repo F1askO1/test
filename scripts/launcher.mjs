@@ -1,3 +1,5 @@
+import { needsBuild, needsInstall, recordInstall } from "./build-utils.mjs";
+import { parseFunnelStatus } from "./funnel.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -6,6 +8,9 @@ import { spawn, execFileSync } from "node:child_process";
 import readline from "node:readline/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  statusGate,
+  endpointIdentity,
+  prepareLocalDiagnostics,
   LauncherError,
   redact,
   errorCode,
@@ -30,7 +35,8 @@ let env = {},
   release,
   stopping = false,
   tunnelState = { registered: false, url: "", pid: 0 },
-  httpChild;
+  httpChild,
+  activeIdentity;
 const children = new Set(),
   stamp = new Date().toISOString().replace(/[:.]/g, "-"),
   logPath = path.join(logs, `launcher-${stamp}.log`);
@@ -39,13 +45,27 @@ function write(message) {
   console.log(safe);
   fs.appendFileSync(logPath, safe + "\n", { mode: 0o600 });
 }
+const gate = statusGate();
+function monitored(component, message, error = false) {
+  const state = gate(component, message, Date.now(), error);
+  if (state.print) write((state.recovered ? "Восстановлено: " : "") + message);
+  else
+    fs.appendFileSync(
+      logPath,
+      new Date().toISOString() +
+        " " +
+        redact(message, [...secrets, root, os.homedir()]) +
+        "\n",
+      { mode: 0o600 },
+    );
+}
 function load() {
   if (!fs.existsSync(envPath))
     throw new LauncherError(
       "Нет .env. Сначала запустите 01_INSTALL.bat, затем 05_EDIT_ENV.bat.",
     );
   env = readEnv(envPath);
-  secrets = [env.BOT_TOKEN, env.TELEGRAM_PROXY_URL];
+  secrets = [env.BOT_TOKEN, env.TELEGRAM_PROXY_URL, env.DIAGNOSTICS_TOKEN];
   if (env.TELEGRAM_PROXY_URL) {
     try {
       const u = new URL(env.TELEGRAM_PROXY_URL);
@@ -313,7 +333,11 @@ async function startTunnel() {
       "Неверные TUNNEL_PROTOCOL / TUNNEL_EDGE_IP_VERSION.",
     );
   // Only cloudflared goes direct, irrespective of inherited HTTP proxy settings. Does not bypass OS TUN/routes.
-  const direct = {};
+  const direct = {
+    BOT_TOKEN: "",
+    TELEGRAM_PROXY_URL: "",
+    DIAGNOSTICS_TOKEN: "",
+  };
   for (const name of [
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -409,13 +433,32 @@ async function monitor() {
     await delay(10000);
     if (stopping) break;
     const localResult = await health(local() + "/api/health");
-    if (!localResult.ok) write("HTTP: " + localResult.reason);
+    monitored(
+      "http-health",
+      localResult.ok ? "HTTP health: ready" : "HTTP: " + localResult.reason,
+      !localResult.ok,
+    );
     if (tunnelState.url) {
       const publicResult = await health(tunnelState.url + "/api/health");
+      if (activeIdentity) {
+        const match = await endpointIdentity(tunnelState.url, activeIdentity);
+        monitored(
+          "identity",
+          match.ok ? "Deployment identity: ready" : match.reason,
+          !match.ok,
+        );
+      }
+      monitored(
+        "public-health",
+        publicResult.ok
+          ? "Публичный health: ready"
+          : "Публичный health: " + publicResult.reason,
+        !publicResult.ok,
+      );
       if (!publicResult.ok) {
         write("Публичный health: " + publicResult.reason);
         write(
-          `Локальный origin: ${localResult.ok ? "доступен" : "недоступен"}. Проверьте лог именно cloudflared PID ${tunnelState.pid}.`,
+          `Локальный origin: ${localResult.ok ? "доступен" : "недоступен"}. ${tunnelState.pid ? "Проверьте лог cloudflared PID " + tunnelState.pid : "Проверьте существующий Tailscale Funnel и APP_URL"}.`,
         );
       }
     }
@@ -429,12 +472,27 @@ async function monitor() {
 }
 async function componentStatus() {
   try {
-    const response = await fetch(local() + "/api/status", {
-      signal: AbortSignal.timeout(3000),
-    });
+    const response = await fetch(
+      local() + (env.DIAGNOSTICS_TOKEN ? "/api/diagnostics" : "/api/status"),
+      {
+        headers: env.DIAGNOSTICS_TOKEN
+          ? { Authorization: "Bearer " + env.DIAGNOSTICS_TOKEN }
+          : {},
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (!response.ok) {
+      write(
+        env.DIAGNOSTICS_TOKEN
+          ? "Защищённая диагностика недоступна; проверьте DIAGNOSTICS_TOKEN локально."
+          : "Статус HTTP недоступен.",
+      );
+      return;
+    }
     const s = await response.json();
-    write(
-      `HTTP: ${s.http}; SQLite: ${s.database}; бот: ${s.telegram?.bot}; Telegram API: ${s.telegram?.api}; proxy: ${s.telegram?.proxy}; меню: ${s.telegram?.setup ?? "unknown"}`,
+    monitored(
+      "components",
+      `Сборка: ${s.buildId ?? "неизвестна"}; HTTP: ${s.http}; SQLite: ${s.database}; бот: ${s.telegram?.bot}; Telegram API: ${s.telegram?.api}; proxy: ${s.telegram?.proxy}; меню: ${s.telegram?.setup ?? "unknown"}`,
     );
   } catch {
     write("Статусы компонентов недоступны.");
@@ -446,15 +504,25 @@ async function diagnostics() {
   write(
     "Диагностика не выполняет Telegram API-запросы и не запускает polling.",
   );
-  const processes = await processList();
-  write(
-    `cloudflared PID: ${
-      processes
-        .filter((p) => /^cloudflared.*\.exe$/i.test(p.name))
-        .map((p) => p.pid)
-        .join(", ") || "нет/не Windows"
-    }`,
-  );
+  if (env.RUN_TARGET === "remote") {
+    const check = await endpointIdentity(env.APP_URL, env.DEPLOYMENT_ID);
+    write(
+      check.ok ? "Удалённый endpoint и deployment совпадают." : check.reason,
+    );
+    if (check.ok)
+      write(
+        `HTTP=${check.status.http}; SQLite=${check.status.database}; bot=${check.status.telegram?.bot}; API=${check.status.telegram?.api}; menu=${check.status.telegram?.menu}`,
+      );
+    return;
+  }
+  let processes = [];
+  try {
+    processes = await processList();
+  } catch {
+    write(
+      "Проверка PID через Windows CIM недоступна; продолжаем read-only проверки порта, Funnel и HTTPS.",
+    );
+  }
   write(
     `Связанные node PID (эвристика CommandLine): ${
       processes
@@ -474,15 +542,24 @@ async function diagnostics() {
       write("Lock launcher повреждён; проверьте исходное окно и PID вручную.");
     }
   }
-  if (processes.filter((p) => /^cloudflared.*\.exe$/i.test(p.name)).length > 1)
+  if (env.PUBLIC_ENDPOINT_MODE === "quick-test") {
     write(
-      "Несколько cloudflared: не связывайте метрики другого PID с этим туннелем.",
+      "Cloudflare quick-test PID: " +
+        processes
+          .filter((p) => /^cloudflared.*\.exe$/i.test(p.name))
+          .map((p) => p.pid)
+          .join(", "),
     );
-  try {
-    cloudflareCommand();
-    write("cloudflared: найден");
-  } catch (e) {
-    write(e.message);
+    try {
+      cloudflareCommand();
+      write("cloudflared найден (только quick-test).");
+    } catch (e) {
+      write(e.message);
+    }
+  } else {
+    const actual = inspectFunnel();
+    if (actual && env.APP_URL && actual !== validateAppUrl(env.APP_URL))
+      write("Funnel URL не совпадает с APP_URL. Проверьте .env.");
   }
   const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
   write(
@@ -498,6 +575,10 @@ async function diagnostics() {
     try {
       const url = validateAppUrl(env.APP_URL);
       const p = await health(url + "/api/health");
+      if (env.DEPLOYMENT_ID) {
+        const match = await endpointIdentity(url, env.DEPLOYMENT_ID);
+        write(match.ok ? "APP_URL deployment совпадает." : match.reason);
+      }
       write("HTTP public: " + (p.ok ? "ok" : p.reason));
       if (p.status === 502)
         write(
@@ -512,32 +593,226 @@ async function diagnostics() {
   } else write("APP_URL не задан.");
   write(`Отчёт без токенов/паролей: ${logPath}`);
 }
+async function remoteMonitor() {
+  const url = validateAppUrl(env.APP_URL);
+  const first = await endpointIdentity(url, env.DEPLOYMENT_ID);
+  if (!first.ok) throw new LauncherError(first.reason);
+  write(
+    "Постоянный удалённый endpoint подтверждён. Backend, SQLite и бот управляются systemd на сервере; локальные копии не запускаются.",
+  );
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  rl.on("line", (line) => {
+    if (line.trim().toLowerCase() === "q")
+      void shutdown().then(() => process.exit(0));
+  });
+  write("q + Enter — закрыть монитор. Удалённый сервер продолжит работу.");
+  while (!stopping) {
+    const result = await endpointIdentity(url, env.DEPLOYMENT_ID);
+    if (result.ok)
+      monitored(
+        "remote",
+        `REMOTE HTTP=${result.status.http}; DB=${result.status.database}; bot=${result.status.telegram?.bot}; API=${result.status.telegram?.api}; menu=${result.status.telegram?.menu}`,
+      );
+    else write(result.reason);
+    await delay(15000);
+  }
+  rl.close();
+}
+async function startExternal(polling = false) {
+  const funnelUrl = inspectFunnel();
+  if (funnelUrl && env.APP_URL && funnelUrl !== validateAppUrl(env.APP_URL))
+    throw new LauncherError(
+      "APP_URL отличается от работающего Funnel. Исправьте .env; сеть не перенастраивалась.",
+    );
+  if (!env.APP_URL && funnelUrl) {
+    saveAppUrl(envPath, funnelUrl);
+    load();
+    write("APP_URL определён из уже работающего Funnel.");
+  }
+  const url = validateAppUrl(env.APP_URL);
+
+  if (!(await freePort(port())))
+    throw new LauncherError(
+      "HTTP-порт занят. Закройте прежний запуск SlopeMate.",
+    );
+  httpChild = startHttp(false);
+  await waitHealth(local() + "/api/health", httpChild);
+  const localStatus = await (
+    await fetch(local() + "/api/status", { signal: AbortSignal.timeout(5000) })
+  ).json();
+  activeIdentity = env.DEPLOYMENT_ID || localStatus.deploymentId;
+  const verification = await endpointIdentity(url, activeIdentity);
+  if (!verification.ok) throw new LauncherError(verification.reason);
+  if (localStatus.buildId !== verification.status?.buildId)
+    throw new LauncherError(
+      "Публичный адрес отдаёт другую сборку. Проверьте старый сервер/Funnel; исходники и dist не совпадают с endpoint.",
+    );
+  if (polling) {
+    await stopChild(httpChild);
+    httpChild = startHttp(true);
+    await waitHealth(local() + "/api/health", httpChild);
+  }
+  await waitHealth(url + "/api/health", httpChild);
+  write(
+    polling
+      ? "Mini App готово. Full Bot инициализируется отдельно; смотрите статус API."
+      : "Mini App готово. Telegram polling отключён. Откройте кнопку, настроенную в BotFather.",
+  );
+  tunnelState.url = url;
+  await componentStatus();
+  await monitor();
+}
+async function dependencies() {
+  if (needsInstall(root)) {
+    write("Устанавливаем зависимости по lockfile…");
+    await result(
+      npm(["ci", "--include=dev"], {
+        tag: "npm",
+        vars: {
+          NODE_ENV: "development",
+          BOT_TOKEN: "",
+          DIAGNOSTICS_TOKEN: "",
+          TELEGRAM_PROXY_URL: "",
+        },
+      }),
+    );
+    recordInstall(root);
+  } else {
+    recordInstall(root);
+    write("Зависимости актуальны; npm ci не требуется.");
+  }
+}
+async function currentBuild() {
+  if (needsBuild(root)) {
+    write("Исходники обновлены — собираем новую версию…");
+    await result(
+      npm(["run", "build"], {
+        tag: "build",
+        vars: {
+          NODE_ENV: "production",
+          BOT_TOKEN: "",
+          DIAGNOSTICS_TOKEN: "",
+          TELEGRAM_PROXY_URL: "",
+        },
+      }),
+    );
+  } else write("Production-сборка актуальна.");
+}
+function tailscaleExecutable() {
+  const candidates = [
+    env.TAILSCALE_PATH,
+    process.env.ProgramFiles &&
+      path.join(process.env.ProgramFiles, "Tailscale", "tailscale.exe"),
+    process.platform === "win32" ? "tailscale.exe" : "tailscale",
+  ].filter(Boolean);
+  for (const exe of candidates) {
+    try {
+      execFileSync(exe, ["version"], {
+        stdio: "ignore",
+        windowsHide: true,
+        timeout: 5000,
+      });
+      return exe;
+    } catch {}
+  }
+  return null;
+}
+function inspectFunnel() {
+  const exe = tailscaleExecutable();
+  if (!exe) {
+    write(
+      "Tailscale не найден. Укажите TAILSCALE_PATH или проверьте APP_URL вручную.",
+    );
+    return null;
+  }
+  try {
+    const output = execFileSync(exe, ["funnel", "status", "--json"], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 10000,
+    });
+    const url = parseFunnelStatus(JSON.parse(output), port());
+    write(
+      url
+        ? "Funnel уже работает и направлен на порт приложения. Используем без пересоздания."
+        : "Не найден активный публичный Funnel на нужный порт. Проверьте Tailscale; launcher не открывает публичный доступ.",
+    );
+    return url;
+  } catch {
+    write(
+      "Не удалось прочитать Funnel status JSON. Проверьте версию Tailscale, вход и права. Ничего не перенастроено.",
+    );
+    return null;
+  }
+}
+async function checkFunnel() {
+  const actual = inspectFunnel();
+  if (actual && env.APP_URL && validateAppUrl(env.APP_URL) !== actual)
+    throw new LauncherError(
+      "APP_URL не совпадает с активным Funnel. Обновите адрес через 05_EDIT_ENV.bat.",
+    );
+  if (!env.APP_URL)
+    throw new LauncherError(
+      "Укажите HTTPS APP_URL существующего Funnel в .env.",
+    );
+  const result = await health(validateAppUrl(env.APP_URL) + "/api/health");
+  write(result.ok ? "Публичный HTTPS health готов." : result.reason);
+  return actual;
+}
 async function main(action) {
   if (fs.existsSync(envPath)) load();
   nodeCheck();
   if (action === "install") {
-    await result(npm(["ci"], { tag: "npm" }));
+    await dependencies();
     if (!fs.existsSync(envPath))
       fs.copyFileSync(".env.example", envPath, fs.constants.COPYFILE_EXCL);
-    await result(npm(["run", "build"], { tag: "build" }));
+    const generated = prepareLocalDiagnostics(envPath);
+    load();
+    if (generated.length)
+      write(
+        "Подготовлены локальные " +
+          generated.join(", ") +
+          "; значения сохранены только в .env.",
+      );
+    await currentBuild();
     write("Установка завершена. Отредактируйте .env через 05_EDIT_ENV.bat.");
     return;
   }
   load();
+  if (action === "funnel") {
+    await checkFunnel();
+    return;
+  }
   if (action === "diagnostics") {
     await diagnostics();
     return;
   }
   if (action === "tests") {
+    await dependencies();
     await result(npm(["run", "check"], { tag: "check" }));
     await result(npm(["test"], { tag: "tests" }));
     await result(npm(["run", "build"], { tag: "build" }));
     return;
   }
-  if (!["local", "telegram", "tunnel"].includes(action))
+  if (!["local", "telegram", "miniapp", "fullbot", "tunnel"].includes(action))
     throw new LauncherError("Неизвестный режим launcher.");
   release = lockFile(path.join(logs, "launcher.lock"));
+  if (action === "telegram")
+    action = env.BOT_ENABLED === "false" ? "miniapp" : "fullbot";
+  const publicAction = action === "miniapp" || action === "fullbot";
+  if (action !== "tunnel") {
+    await dependencies();
+    await currentBuild();
+  }
   if (action === "local") {
+    if (port() !== 3001)
+      throw new LauncherError(
+        "Локальный Vite настроен на API 3001. Для 02_LOCAL задайте PORT=3001.",
+      );
     if (!(await freePort(port())) || !(await freePort(5173)))
       throw new LauncherError(
         "Порт HTTP или 5173 уже занят. Закройте прежний запуск; чужие процессы не останавливаем.",
@@ -549,6 +824,10 @@ async function main(action) {
         DEV_AUTH: "true",
         BOT_TOKEN: "",
         BOT_ENABLED: "false",
+        APP_URL: "",
+        DEPLOYMENT_ID: "",
+        DIAGNOSTICS_TOKEN: "",
+        TELEGRAM_PROXY_URL: "",
         HOST: "127.0.0.1",
       },
     });
@@ -559,17 +838,35 @@ async function main(action) {
     await monitor();
     return;
   }
+  if (publicAction && env.RUN_TARGET === "remote") {
+    await remoteMonitor();
+    return;
+  }
   assertPublicEnv(env);
   if (!fs.existsSync("dist/backend/src/index.js"))
     throw new LauncherError(
       "Нет сборки. Выполните 01_INSTALL.bat или 06_TESTS.bat.",
     );
-  const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
-  if (proxy.configured && !proxy.tcp)
-    write(
-      "Прокси TCP недоступен. HTTP и туннель продолжат запуск; Telegram выполнит ограниченные повторы. Запустите Karing SOCKS и проверьте порт; TUN не обязателен.",
+  if (action === "fullbot") {
+    const proxy = await proxyCheck(env.TELEGRAM_PROXY_URL);
+    if (proxy.configured && !proxy.tcp)
+      write(
+        "Прокси недоступен. HTTP продолжит работать; bot будет восстанавливаться отдельно.",
+      );
+  }
+  if (publicAction && (env.PUBLIC_ENDPOINT_MODE || "external") === "external") {
+    await startExternal(action === "fullbot");
+    return;
+  }
+  if (publicAction && env.PUBLIC_ENDPOINT_MODE !== "quick-test")
+    throw new LauncherError(
+      "Выберите PUBLIC_ENDPOINT_MODE=external (постоянный адрес) либо quick-test только для тестов.",
     );
-  if (action === "telegram") {
+  if (publicAction)
+    write(
+      "ВНИМАНИЕ: quick-test — временный Cloudflare, не режим постоянной эксплуатации.",
+    );
+  if (publicAction) {
     cloudflareCommand();
     await conflicts();
     if (!(await freePort(port())))
@@ -584,7 +881,7 @@ async function main(action) {
     write("APP_URL обновлён; остальные настройки .env сохранены.");
     // Restart only our HTTP process, with the verified URL. No overlapping pollers.
     await stopChild(httpChild);
-    httpChild = startHttp(true);
+    httpChild = startHttp(action === "fullbot");
     await waitHealth(local() + "/api/health", httpChild);
     await waitHealth(tunnelState.url + "/api/health", httpChild, 30000);
     await componentStatus();
@@ -611,19 +908,20 @@ async function menu() {
     output: process.stdout,
   });
   write(
-    "\nSlopeMate — запуск Windows\n1. Установить зависимости и собрать\n2. Локальное приложение (без публикации)\n3. Только туннель к приватному серверу\n4. Запустить Telegram Mini App (все компоненты)\n5. Редактировать .env\n6. Проверки и сборка\n7. Диагностика\n0. Выход",
+    "\nSlopeMate — Monochrome Alpine\n1. Установить / обновить (ZIP, без Git)\n2. Локальный режим разработки\n3. Mini App Only — Tailscale Funnel\n4. Mini App + Full Telegram Bot\n5. Проверить Tailscale и HTTPS\n6. Открыть .env\n7. Диагностика\n8. Тестирование\n0. Выход",
   );
   const answer = await rl.question("Выберите пункт: ");
   rl.close();
   const action = {
     1: "install",
     2: "local",
-    3: "tunnel",
-    4: "telegram",
-    6: "tests",
+    3: "miniapp",
+    4: "fullbot",
+    5: "funnel",
     7: "diagnostics",
+    8: "tests",
   }[answer.trim()];
-  if (answer.trim() === "5") {
+  if (answer.trim() === "6") {
     if (!fs.existsSync(envPath))
       fs.copyFileSync(".env.example", envPath, fs.constants.COPYFILE_EXCL);
     await new Promise((resolve) => {
@@ -637,7 +935,7 @@ async function menu() {
     return;
   }
   if (answer.trim() === "0") return;
-  if (!action) throw new LauncherError("Выберите пункт 0–7.");
+  if (!action) throw new LauncherError("Выберите пункт 0–8.");
   await main(action);
 }
 try {

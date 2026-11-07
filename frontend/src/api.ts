@@ -1,3 +1,4 @@
+import { decodeApiResponse, ApiError } from "./transport";
 import type { Analysis } from "../../shared/track";
 export type Profile = {
   nickname: string;
@@ -19,7 +20,7 @@ export type Me = {
 };
 export type Session = {
   id: string;
-  source: "gps" | "gpx" | "demo";
+  source: "gps" | "gpx" | "demo" | "native";
   resort: string;
   trip: string;
   started_at: number;
@@ -88,16 +89,12 @@ export async function api<T>(
       signal: AbortSignal.timeout(30000),
     });
   } catch {
-    throw new Error(
+    throw new ApiError(
+      "network",
       "Нет связи с сервером. Данные записи остаются на устройстве.",
     );
   }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error ?? `Ошибка сервера (${response.status})`);
-  }
-  if (response.status === 204) return undefined as T;
-  return response.json();
+  return decodeApiResponse<T>(response);
 }
 export const km = (m: number) =>
   (m / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 });

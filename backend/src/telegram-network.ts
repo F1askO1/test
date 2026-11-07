@@ -1,5 +1,6 @@
 import { SocksProxyAgent } from "socks-proxy-agent";
-import { createConnection } from "node:net";
+import { createConnection, isIP } from "node:net";
+import { connect as tlsConnect } from "node:tls";
 import type { BotConfig, Context } from "grammy";
 export function proxyAddress(raw: string): URL | null {
   if (!raw.trim()) return null;
@@ -22,15 +23,74 @@ export function proxyAddress(raw: string): URL | null {
     );
   return u;
 }
-export function telegramClient(raw: string): BotConfig<Context>["client"] {
+export type TelegramTiming = {
+  connectMs: number;
+  requestSeconds: number;
+  pollSeconds: number;
+};
+export function telegramTiming(
+  env: NodeJS.ProcessEnv = process.env,
+): TelegramTiming {
+  const integer = (key: string, fallback: number, min: number, max: number) => {
+    const raw = env[key];
+    const n = raw ? Number(raw) : fallback;
+    if (!Number.isInteger(n) || n < min || n > max)
+      throw new Error("Invalid Telegram timing configuration");
+    return n;
+  };
+  const timing = {
+    connectMs: integer("TELEGRAM_CONNECT_TIMEOUT_MS", 10000, 100, 60000),
+    requestSeconds: integer("TELEGRAM_REQUEST_TIMEOUT_SECONDS", 45, 5, 120),
+    pollSeconds: integer("TELEGRAM_POLL_TIMEOUT_SECONDS", 15, 1, 50),
+  };
+  if (
+    timing.requestSeconds < timing.pollSeconds + 10 ||
+    timing.connectMs >= timing.requestSeconds * 1000
+  )
+    throw new Error(
+      "Telegram request deadline must exceed poll and connect deadlines",
+    );
+  return timing;
+}
+// socks-proxy-agent 10 applies opts.timeout again as a post-connect socket idle
+// timer. Separate the SOCKS handshake from HTTP/TLS: an idle getUpdates is valid.
+export class TelegramSocksAgent extends SocksProxyAgent {
+  override async connect(
+    req: Parameters<SocksProxyAgent["connect"]>[0],
+    opts: Parameters<SocksProxyAgent["connect"]>[1],
+  ) {
+    const socket = await super.connect(req, { ...opts, secureEndpoint: false });
+    socket.setTimeout(0);
+    if (req.destroyed) {
+      socket.destroy();
+      throw Object.assign(new Error("Request aborted"), { name: "AbortError" });
+    }
+    if (!opts.secureEndpoint) return socket;
+    const { host, path, port, ...tlsOptions } = opts;
+    const secure = tlsConnect({
+      ...tlsOptions,
+      socket,
+      servername: opts.servername ?? (host && !isIP(host) ? host : undefined),
+    });
+    secure.once("error", () => socket.destroy());
+    return secure;
+  }
+}
+export function telegramClient(
+  raw: string,
+  timing = telegramTiming(),
+): BotConfig<Context>["client"] {
   const u = proxyAddress(raw);
   return {
-    timeoutSeconds: 45,
+    timeoutSeconds: timing.requestSeconds,
     sensitiveLogs: false,
     ...(u
       ? {
           baseFetchConfig: {
-            agent: new SocksProxyAgent(u, { timeout: 10000 }),
+            agent: new TelegramSocksAgent(u, {
+              timeout: timing.connectMs,
+              keepAlive: false,
+            }),
           },
         }
       : {}),

@@ -1,3 +1,4 @@
+import { loadDraft, persistDraft } from "./recorder-store";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tg } from "./api";
 import type { Point } from "../../shared/track";
@@ -24,24 +25,64 @@ export function useRecorder(userId: number) {
     [notice, setNotice] = useState(""),
     [now, setNow] = useState(Date.now()),
     [provider, setProvider] = useState<"browser" | "telegram">("browser");
+  const [ready, setReady] = useState(false);
+  const writes = useRef(Promise.resolve());
   const activeRef = useRef(false),
     lastFix = useRef(0),
     gap = useRef(false),
     draftRef = useRef(draft);
   draftRef.current = draft;
+  useEffect(() => {
+    let cancelled = false;
+    void loadDraft(key)
+      .then(async (saved) => {
+        if (cancelled) return;
+        if (saved) {
+          draftRef.current = saved;
+          setDraft(saved);
+        } else if (draftRef.current) {
+          await persistDraft(key, draftRef.current);
+        }
+      })
+      .catch(() =>
+        setNotice(
+          "IndexedDB недоступна. Локальное резервное хранилище ограничено; синхронизируйте запись до закрытия.",
+        ),
+      )
+      .finally(() => {
+        if (!cancelled) setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
   const update = useCallback(
-    (d: Draft | null) => {
+    (d: Draft | null, append?: Point) => {
       draftRef.current = d;
       setDraft(d);
-      try {
-        d
-          ? localStorage.setItem(key, JSON.stringify(d))
-          : localStorage.removeItem(key);
-      } catch {
-        setNotice(
-          "Не удалось сохранить запись на устройстве: возможно, хранилище заполнено. Завершите и синхронизируйте запись.",
-        );
-      }
+      writes.current = writes.current
+        .then(async () => {
+          await persistDraft(key, d, append);
+          // Only shrink the legacy backup AFTER a durable IndexedDB commit.
+          try {
+            d
+              ? localStorage.setItem(
+                  key,
+                  JSON.stringify({ ...d, points: d.points.slice(0, 128) }),
+                )
+              : localStorage.removeItem(key);
+          } catch {}
+        })
+        .catch(() => {
+          // Preserve an existing full legacy draft when migration or storage fails.
+          try {
+            if (!localStorage.getItem(key) && d)
+              localStorage.setItem(key, JSON.stringify(d));
+          } catch {}
+          setNotice(
+            "Не удалось сохранить точки в IndexedDB. Не закрывайте приложение; завершите и синхронизируйте запись.",
+          );
+        });
     },
     [key],
   );
@@ -64,9 +105,10 @@ export function useRecorder(userId: number) {
         return;
       }
       if (p.t <= (points.at(-1)?.t ?? 0)) return;
-      p.breakBefore = gap.current;
+      p.breakBefore =
+        gap.current || Boolean(points.at(-1) && p.t - points.at(-1)!.t > 25000);
       gap.current = false;
-      update({ ...draftRef.current, points: [...points, p] });
+      update({ ...draftRef.current, points: [...points, p] }, p);
     },
     [update],
   );
@@ -77,6 +119,7 @@ export function useRecorder(userId: number) {
   }, []);
   const start = useCallback(
     (resort: string, trip: string) => {
+      if (!ready) return;
       if (!draftRef.current)
         update({
           id: crypto.randomUUID(),
@@ -91,7 +134,7 @@ export function useRecorder(userId: number) {
       setActive(true);
       tg?.HapticFeedback?.impactOccurred("medium");
     },
-    [update],
+    [update, ready],
   );
   useEffect(() => {
     if (!active) return;
@@ -122,6 +165,7 @@ export function useRecorder(userId: number) {
                 accuracy: p.coords.accuracy,
                 altAccuracy: p.coords.altitudeAccuracy,
                 speed: p.coords.speed,
+                heading: p.coords.heading,
               }),
             (e) => {
               error(
@@ -144,7 +188,7 @@ export function useRecorder(userId: number) {
           pause();
         } else {
           const poll = () => {
-            if (cancelled || inflight || document.hidden) return;
+            if (cancelled || inflight) return;
             inflight = true;
             try {
               lm.getLocation((p) => {
@@ -204,6 +248,7 @@ export function useRecorder(userId: number) {
       e.preventDefault();
     };
     document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("pagehide", visibility);
     window.addEventListener("beforeunload", before);
     const clock = setInterval(() => {
       setNow(Date.now());
@@ -218,6 +263,7 @@ export function useRecorder(userId: number) {
       if (timer) clearInterval(timer);
       clearInterval(clock);
       document.removeEventListener("visibilitychange", visibility);
+      window.removeEventListener("pagehide", visibility);
       window.removeEventListener("beforeunload", before);
       tg?.disableClosingConfirmation?.();
     };
@@ -230,6 +276,7 @@ export function useRecorder(userId: number) {
   );
   return {
     draft,
+    ready,
     active,
     notice,
     now,

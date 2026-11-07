@@ -1,0 +1,36 @@
+[Unit]
+Description=SlopeMate private Mini App and Telegram bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=slopemate
+Group=slopemate
+WorkingDirectory=/opt/slopemate/current
+EnvironmentFile=/etc/slopemate/slopemate.env
+Environment=PATH=/opt/node24/bin:/usr/local/bin:/usr/bin:/bin
+Environment=BOT_LOCK_DIRECTORY=/run/slopemate
+ExecStart=/opt/node24/bin/node /opt/slopemate/current/dist/backend/src/index.js
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0077
+StateDirectory=slopemate
+StateDirectoryMode=0700
+RuntimeDirectory=slopemate
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

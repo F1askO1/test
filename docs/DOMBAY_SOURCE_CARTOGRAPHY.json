@@ -1,0 +1,169 @@
+{
+  "resort": "ru-dombay",
+  "sourceObjects": 149,
+  "sourceRoles": {
+    "boundaries": 107,
+    "centerlinePistes": 29
+  },
+  "confirmedAreas": [
+    {
+      "id": "relation-6925945",
+      "name": "Площадь OSM 6925945",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 3
+    },
+    {
+      "id": "relation-6925946",
+      "name": "Площадь OSM 6925946",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 35
+    },
+    {
+      "id": "relation-6925947",
+      "name": "Площадь OSM 6925947",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 19
+    },
+    {
+      "id": "relation-6925948",
+      "name": "Площадь OSM 6925948",
+      "rings": 2,
+      "complete": true,
+      "sourceWays": 17
+    },
+    {
+      "id": "relation-20129592",
+      "name": "Площадь OSM 20129592",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 9
+    },
+    {
+      "id": "relation-20129615",
+      "name": "Домбайская поляна",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 1
+    },
+    {
+      "id": "relation-20129617",
+      "name": "Лесная",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 31
+    },
+    {
+      "id": "way-879140376",
+      "name": "Сулахат",
+      "rings": 1,
+      "complete": true,
+      "sourceWays": 1
+    }
+  ],
+  "lod": [
+    {
+      "zoom": 12,
+      "vertices": 207
+    },
+    {
+      "zoom": 13,
+      "vertices": 245
+    },
+    {
+      "zoom": 15,
+      "vertices": 468
+    },
+    {
+      "zoom": 17,
+      "vertices": 653
+    }
+  ],
+  "pistes": 136,
+  "lifts": 13,
+  "repeatedIds": [],
+  "exactWholeLineGroups": [],
+  "sourceEdges": 1638,
+  "uniqueSourceEdges": 1633,
+  "sharedSourceEdges": [
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940482",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940482",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940484",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "intermediate",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940501",
+        "https://www.openstreetmap.org/way/879140376"
+      ],
+      "difficulties": [
+        "easy",
+        "easy"
+      ]
+    },
+    {
+      "sources": [
+        "https://www.openstreetmap.org/way/469940517",
+        "https://www.openstreetmap.org/way/1469753838"
+      ],
+      "difficulties": [
+        "easy",
+        "easy"
+      ]
+    }
+  ],
+  "approximateCandidatesOnly": [],
+  "partialApproximateCandidatesOnly": [
+    {
+      "ids": [
+        "way-1469753698",
+        "way-469940509"
+      ],
+      "shorterCoverage": 1,
+      "sampledMeters": 88.63597217568076
+    },
+    {
+      "ids": [
+        "way-1469753725",
+        "way-1117972576"
+      ],
+      "shorterCoverage": 0.8432505256153913,
+      "sampledMeters": 53.9910449949869
+    }
+  ],
+  "selfCrossings": [],
+  "closedContours": [],
+  "displayLinearSegments": 644,
+  "renderedPaths": 42,
+  "displaySharedSegments": 0,
+  "displayConflictSegments": 0,
+  "sourceIdsPreserved": 149,
+  "warning": "Approximate candidates are NOT automatically merged. Closed legacy contours have unconfirmed area semantics. Counts are edges, not official routes."
+}

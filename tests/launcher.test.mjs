@@ -125,7 +125,12 @@ test("actual diagnostic launcher writes no token or proxy credentials to logs", 
   const secret = "123456:synthetic_sensitive_token_never_log_this";
   try {
     fs.mkdirSync(path.join(dir, "scripts"));
-    for (const file of ["launcher.mjs", "network-utils.mjs"])
+    for (const file of [
+      "launcher.mjs",
+      "network-utils.mjs",
+      "build-utils.mjs",
+      "funnel.mjs",
+    ])
       fs.copyFileSync(
         new URL("../scripts/" + file, import.meta.url),
         path.join(dir, "scripts", file),
@@ -159,6 +164,91 @@ test("actual diagnostic launcher writes no token or proxy credentials to logs", 
       assert.ok(!output.includes("socks5://name"));
     }
     assert.match(text, /Диагностика/);
+    assert.ok(!text.includes("cloudflared не найден"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("fixed endpoint identity rejects stale URL, disabled private auth and unready database", async () => {
+  const { endpointIdentity } = await import("../scripts/network-utils.mjs");
+  for (const [id, mode, database, ok] of [
+    ["identity-123", "production-private", "ready", true],
+    ["old-identity", "production-private", "ready", false],
+    ["identity-123", "local-development", "ready", false],
+    ["identity-123", "production-private", "unavailable", false],
+  ]) {
+    const result = await endpointIdentity(
+      "https://app.example.com",
+      "identity-123",
+      {
+        fetchFn: async () =>
+          new Response(
+            JSON.stringify({ http: "ready", deploymentId: id, mode, database }),
+          ),
+      },
+    );
+    assert.equal(result.ok, ok);
+  }
+  assert.equal(
+    (await endpointIdentity("https://app.example.com", "")).ok,
+    false,
+  );
+});
+test("production env generator writes unique private credentials once and never overwrites a user file", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { parse } = await import("dotenv");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "slope-production-env-")),
+    file = path.join(dir, "slopemate.env");
+  try {
+    const output = execFileSync(
+      process.execPath,
+      ["deploy/prepare-env.mjs", file],
+      { encoding: "utf8" },
+    );
+    const content = fs.readFileSync(file, "utf8"),
+      env = parse(content);
+    assert.equal(env.DEV_AUTH, "false");
+    assert.equal(env.BOT_TOKEN, "");
+    assert.match(env.DIAGNOSTICS_TOKEN, /^[a-f0-9]{64}$/);
+    assert.ok(!output.includes(env.DIAGNOSTICS_TOKEN));
+    assert.ok(env.DEPLOYMENT_ID.length >= 8);
+    assert.throws(() =>
+      execFileSync(process.execPath, ["deploy/prepare-env.mjs", file], {
+        stdio: "ignore",
+      }),
+    );
+    assert.equal(fs.readFileSync(file, "utf8"), content);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+test("Windows install provisions missing diagnostics without changing token, APP_URL, or existing identity", async () => {
+  const { prepareLocalDiagnostics, readEnv } =
+    await import("../scripts/network-utils.mjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "slope-local-env-")),
+    file = path.join(dir, ".env");
+  try {
+    fs.writeFileSync(
+      file,
+      "BOT_TOKEN=fixture_keep_exact\r\nAPP_URL=https://app.example.com\r\nDEPLOYMENT_ID=\r\nDIAGNOSTICS_TOKEN=\r\n",
+    );
+    assert.deepEqual(prepareLocalDiagnostics(file), [
+      "DEPLOYMENT_ID",
+      "DIAGNOSTICS_TOKEN",
+    ]);
+    const first = fs.readFileSync(file, "utf8"),
+      env = readEnv(file);
+    assert.equal(env.BOT_TOKEN, "fixture_keep_exact");
+    assert.equal(env.APP_URL, "https://app.example.com");
+    assert.equal((first.match(/DIAGNOSTICS_TOKEN=/g) || []).length, 1);
+    assert.match(env.DIAGNOSTICS_TOKEN, /^[a-f0-9]{64}$/);
+    assert.deepEqual(prepareLocalDiagnostics(file), []);
+    assert.equal(fs.readFileSync(file, "utf8"), first);
+    fs.writeFileSync(
+      file,
+      "RUN_TARGET=remote\nAPP_URL=https://app.example.com\n",
+    );
+    assert.deepEqual(prepareLocalDiagnostics(file), []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

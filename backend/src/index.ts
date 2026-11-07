@@ -1,9 +1,17 @@
 import "dotenv/config";
+import { proxyTrust } from "./proxy-trust.js";
+import { readFileSync } from "node:fs";
+let buildId = "unbuilt";
+try {
+  buildId = JSON.parse(readFileSync("dist/build-meta.json", "utf8")).id;
+} catch {}
 import { openDb } from "./db.js";
 import { createApp } from "./app.js";
 import { makeBot } from "./bot.js";
 import { TelegramRuntime } from "./telegram-runtime.js";
-import { probeProxy } from "./telegram-network.js";
+import { probeProxy, telegramTiming } from "./telegram-network.js";
+import { acquireBotLock } from "./bot-lock.js";
+import { deploymentId, EndpointMonitor } from "./deployment.js";
 import { log, safeError } from "./safe-log.js";
 const production = process.env.NODE_ENV === "production",
   devAuth = process.env.DEV_AUTH === "true";
@@ -25,17 +33,31 @@ try {
 } catch {}
 const enabled = Boolean(token) && process.env.BOT_ENABLED !== "false";
 const db = openDb(process.env.DATABASE_PATH ?? "./data/slopemate.sqlite");
+const identity = deploymentId(
+  process.env.DATABASE_PATH ?? "./data/slopemate.sqlite",
+  process.env.DEPLOYMENT_ID,
+);
+const endpoint = url ? new EndpointMonitor(url, identity) : undefined;
 let runtime: TelegramRuntime | undefined;
 let botConfigError = false;
 const app = createApp(db, {
   production,
+  deploymentId: identity,
+  endpoint: () =>
+    endpoint?.status ?? {
+      state: "unknown",
+      checkedAt: null,
+      lastSuccessAt: null,
+    },
+  diagnosticsToken: process.env.DIAGNOSTICS_TOKEN,
   devAuth,
   token,
   origins: (process.env.CORS_ORIGINS ?? "")
     .split(",")
     .filter(Boolean)
     .concat(publicOrigin ? [publicOrigin] : []),
-  trustProxy: Number(process.env.TRUST_PROXY ?? 0),
+  trustProxy: proxyTrust(process.env.TRUST_PROXY ?? "0"),
+  buildId,
   status: () =>
     runtime?.status ?? {
       bot: botConfigError ? "failed" : "disabled",
@@ -51,6 +73,7 @@ const server = app.listen(
       "http",
       `SlopeMate API ready on port ${process.env.PORT ?? 3001}; local auth: ${devAuth}`,
     );
+    endpoint?.start();
     if (enabled) {
       try {
         const origin = new URL(url);
@@ -66,13 +89,15 @@ const server = app.listen(
         const bot = makeBot(token, url, db, proxy);
         runtime = new TelegramRuntime(bot, url, {
           probe: proxy ? (s) => probeProxy(proxy, s) : undefined,
+          pollSeconds: telegramTiming().pollSeconds,
+          acquire: () => acquireBotLock(token, process.env.BOT_LOCK_DIRECTORY),
         });
         void runtime.start();
       } catch (e) {
         botConfigError = true;
         log(
           "telegram",
-          `${safeError(e)}; invalid APP_URL or TELEGRAM_PROXY_URL. HTTP remains available.`,
+          `${safeError(e)}; invalid APP_URL, TELEGRAM_PROXY_URL or Telegram timing configuration. HTTP remains available.`,
         );
       }
     } else log("telegram", "Bot disabled; HTTP remains available.");
@@ -92,7 +117,7 @@ async function shutdown() {
   const force = setTimeout(() => process.exit(1), 8000);
   force.unref();
   try {
-    await runtime?.stop();
+    await Promise.all([runtime?.stop(), endpoint?.stop()]);
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeIdleConnections();

@@ -1,0 +1,25 @@
+{
+  "state": {
+    "mapView": "43.2895483,41.6523673,15",
+    "basemapProvider": "osm",
+    "tileState": "unavailable",
+    "tileLoaded": "0",
+    "tileFailed": "24",
+    "tilePending": "0",
+    "tileVisible": "24",
+    "tileCoverage": "0.000000",
+    "displaySegments": "644",
+    "sourceLines": "149",
+    "geometryMode": "normalized"
+  },
+  "viewport": {
+    "x": 11,
+    "y": 69.5,
+    "width": 368,
+    "height": 683.5,
+    "top": 69.5,
+    "right": 379,
+    "bottom": 753,
+    "left": 11
+  }
+}

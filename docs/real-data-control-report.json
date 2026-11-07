@@ -1,0 +1,95 @@
+{
+  "checkedAt": "2026-11-05T15:41:49.092Z",
+  "baseCommit": "c4aa97d",
+  "liveSource": "https://overpass-api.de/api/interpreter",
+  "actualImported": {
+    "resorts": 0,
+    "pistes": 0,
+    "lifts": 0,
+    "classified": 0,
+    "classificationShare": null
+  },
+  "targets": [
+    {
+      "id": "dombay",
+      "name": "Домбай",
+      "status": "blocked-before-source-response",
+      "error": "HTTPS proxy CONNECT 403",
+      "prepared": false
+    },
+    {
+      "id": "arkhyz",
+      "name": "Архыз",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "rosa-khutor",
+      "name": "Роза Хутор",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "elbrus",
+      "name": "Эльбрус",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    },
+    {
+      "id": "sheregesh",
+      "name": "Шерегеш",
+      "status": "not-attempted-until-dombay-works",
+      "error": null,
+      "prepared": false
+    }
+  ],
+  "realScreenshots": [],
+  "testFixturesAreNotCoverage": true,
+  "requiredAction": "Apply/publish the saved cloud environment network configuration and bind/restart this task with that published version; verify effective host grant. Alternatively prepare Dombay on an authorized PC and transfer a validated .slopemap using 09_UPDATE_MAPS.bat.",
+  "checkedAtMoscow": "2026-11-05T18:41:49.092000+03:00",
+  "blockingLayer": {
+    "component": "cloud outbound HTTPS proxy",
+    "server": "envoy",
+    "connectStatus": 403,
+    "targetHttpStatus": null,
+    "targetTlsEstablished": false,
+    "activePolicy": "restricted/enforced",
+    "activeRuntimeOverpassAllowed": false,
+    "activePolicyFileOverpassAllowed": false,
+    "draftOverpassListed": true,
+    "draftRevision": 4,
+    "observationsCurrent": true,
+    "note": "Saved draft and effective runtime policy are distinct. Current instance has no effective Overpass grant."
+  },
+  "executedChecks": {
+    "curlStatusProbe": {
+      "exitCode": 56,
+      "connectStatus": 403,
+      "targetHttpStatus": null
+    },
+    "resortPreparation": {
+      "command": "npm run maps:prepare -- --resort dombay",
+      "exitCode": 1,
+      "failedPart": "sites",
+      "attempt": 1,
+      "error": "HTTP_403",
+      "preparedSnapshotCreated": false
+    },
+    "realBrowserTest": {
+      "command": "npm run test:e2e -- dombay-real.spec.ts",
+      "passed": 0,
+      "failed": 0,
+      "skipped": 1,
+      "reason": "Real Dombay dataset absent; no simulated geometry or tiles substituted."
+    },
+    "confirmedPackageExport": {
+      "command": "npm run maps:package -- export map-exports/confirmed-resorts-recheck.slopemap",
+      "exitCode": 1,
+      "created": false,
+      "reason": "Empty catalogue rejected"
+    }
+  }
+}

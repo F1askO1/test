@@ -1,0 +1,24 @@
+{
+  "commit": "cf27381",
+  "dataset": {
+    "mapView": "43.2895483,41.6523673,15",
+    "displaySegments": "1273",
+    "sourceLines": "149",
+    "geometryMode": "normalized"
+  },
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "mapRect": {
+    "x": 11,
+    "y": 69.5,
+    "width": 368,
+    "height": 683.5,
+    "top": 69.5,
+    "right": 379,
+    "bottom": 753,
+    "left": 11
+  },
+  "basemap": "OFFLINE: tile requests explicitly aborted; no real terrain claim"
+}

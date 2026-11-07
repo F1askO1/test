@@ -1,4 +1,53 @@
+# Доработка загрузки курортов после 269dec0
+
+Ветка fix/resort-data-pipeline: check/build успешны; 77 автоматических тестов прошли; Chromium 14 passed, 1 skipped (именно настоящая карта Домбая). Живой запрос источника остановлен proxy CONNECT 403. Реальные геоданные не получены, скриншоты настоящего Домбая не созданы, цель приёмки не объявлена выполненной. Новый код resume/cache/пакетов и статус источников: [REAL_RESORT_IMPORT_RU.md](REAL_RESORT_IMPORT_RU.md).
+
+Следующие результаты относятся к предыдущим версиям.
+
+---
+
+# Ski Map / GPS Engine 2.0 — текущая проверка
+
+`npm run check`, `npm run build`: успешно. `npm test`: **63 passed**. Chromium Playwright: **14 passed**. Подробности, честные ограничения и синтетические скриншоты — [SKI_MAP_TEST_REPORT_RU.md](SKI_MAP_TEST_REPORT_RU.md).
+
+Реальные данные российских курортов не загружены из-за network policy (начальный каталог 0/0/0). Нативный iOS-проект не собран без Mac/Xcode и не испытан при блокировке экрана. Эти критерии не объявлены выполненными. Следующие разделы — исторические проверки прежних версий.
+
+---
+
+# Проверка Monochrome Alpine и Windows ZIP launcher
+
+Основа: `87bd5ae`, сетевые исправления сохранены. Изменены UI, bootstrap/актуальность сборки, режимы запуска и ограниченное доверие reverse proxy. Схема SQLite, алгоритм GPS/GPX и HMAC initData не переписывались.
+
+- Чистый `npm ci --include=dev --no-audit --no-fund`: успешно.
+- `npm run check`, `npm run build`: успешно.
+- `npm test`: **50 passed**, 0 failed, 0 skipped.
+- Playwright Chromium: **8 passed**. Существующие функциональные сценарии и новые визуальные проверки 375/390/430, reduced motion, ошибки и 393 safe area.
+- Bootstrap проверен в отдельной временной папке без node_modules/dotenv/Git. Проверены receipt установки, распознавание ручного npm ci, stale build, только публичный root Funnel, production Mini App Only без API/прокси и с настоящей локальной HMAC-проверкой тестового initData.
+- 36 снимков: [PREMIUM_UI_REVIEW.md](PREMIUM_UI_REVIEW.md). Тайлы в визуальном тесте намеренно отключены; GPS — эмуляция, Telegram script — mock.
+- Windows, настоящий iPhone, Karing и действующий пользовательский Funnel в облаке не проверены. Инструкция ручной приёмки и переноса SQLite: [START_WINDOWS_RU.md](START_WINDOWS_RU.md). Никаких новых туннелей, серверов, DNS, VPN или платных ресурсов не создавалось.
+
+Ниже сохранены исторические результаты предыдущих итераций; их число тестов и прежнее описание UI относятся к соответствующим версиям.
+
+---
+
 # Результаты проверки 5 ноября 2026
+
+## Актуальная проверка стабилизации
+
+Работа от main после merge PR #2, ветка `fix/stable-deployment`.
+
+- `npm ci --no-audit --no-fund`: успешно, lockfile воспроизводим.
+- `npm run check`, `npm run build`: успешно.
+- `npm test`: **44 passed**, 0 failed, 0 skipped. Новые проверки воспроизводят старый socket idle reset на локальном TLS/SOCKS, подтверждают исправленный idle poll и отказ недоверенному сертификату, handshake timeout, восстановление после >6 сбоев и двух циклов ECONNRESET, jitter/cooldown, menu mismatch/repair, приватную диагностику, identity после рестарта, exclusive token lock, классификацию API/авторизации/SQLite, безопасное создание env без перезаписи.
+- Playwright / системный Chromium: **3 passed**, 0 failed. Существующие мобильные сценарии GPS, GPX, профиля и истории сохранены. Эмуляция не является физическим iPhone.
+- `npm audit --omit=dev --audit-level=high`: **0 vulnerabilities** в проверенных production-зависимостях.
+- Bash/Node syntax checks install/launcher/soak скриптов прошли. Linux VPS installer, Caddy и systemd фактически не развёрнуты; приёмка конфигурации на целевом сервере остаётся необходимой.
+- Схема SQLite, анализ треков, GPS hook, CSS и функциональные экраны не менялись. Backend теперь правильно возвращает 500 при ошибке БД вместо ложного 401. Frontend transport изменён только для различения ошибок.
+- `.env`, SQLite, node_modules, logs и dist исключены из коммита. Тестовые сертификаты и ключи создаются в памяти; настоящий Telegram Bot Token не использован.
+
+**Не подтверждено:** реальный Windows/Karing, iPhone, выбранный VPS/домен/DNS, Caddy certificate issuance, настоящий Telegram и непрерывная работа >60 минут. Эти критерии нельзя объявлять выполненными по локальным tests. `npm run soak` и STABILITY_ACCEPTANCE_RU.md подготовлены для 90-минутной реальной приёмки, но длительный прогон агентом не запускался.
+
+Подтверждённые дефекты и внешние гипотезы: AUDIT_STABILITY_RU.md. Постоянное размещение: DEPLOYMENT_RU.md. Никакие платные ресурсы, аккаунты, DNS или системные маршруты пользователя автоматически не создавались/не менялись. Исторические результаты предыдущих итераций приведены ниже.
 
 Выполнено в текущей Linux cloud-среде, Node.js 24.22.1:
 

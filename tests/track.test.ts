@@ -60,7 +60,8 @@ test("trusted synthetic altitude separates ascent and descent", () => {
 test("unreliable altitude never produces vertical records", () => {
   const a = analyze(demoTrack().map((p) => ({ ...p, altAccuracy: null })));
   assert.equal(a.drop, null);
-  assert.equal(a.runs.length, 0);
+  assert.equal(a.runs.length, 2);
+  assert.equal(a.altitudeQuality, "inferred");
   assert.ok(a.distance > 0);
 });
 test("invalid coordinates and impossible time are ignored", () => {

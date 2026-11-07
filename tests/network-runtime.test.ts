@@ -51,7 +51,10 @@ function makeRuntime(
         result: await handler(method, signal as unknown as AbortSignal),
       }) as any,
   );
-  return new TelegramRuntime(bot, "https://example.com", options);
+  return new TelegramRuntime(bot, "https://example.com", {
+    random: () => 0.5,
+    ...options,
+  });
 }
 test("failed setMyCommands, polling failure and retry do not stop HTTP; shutdown aborts long polling", async () => {
   const db = openDb(":memory:"),
@@ -101,39 +104,49 @@ test("failed setMyCommands, polling failure and retry do not stop HTTP; shutdown
   await runtime.stop();
   await task;
   assert.equal(runtime.status.bot, "stopped");
-  assert.deepEqual(delays, [1000, 2000, 1000]);
+  assert.deepEqual(delays, [1000]);
   assert.ok(!lines.join().includes("secret_sensitive"));
   db.close();
 });
-test("unreachable proxy has bounded attempts and capped exponential delays", async () => {
-  const s = createServer();
-  s.listen(0, "127.0.0.1");
-  await once(s, "listening");
-  const port = (s.address() as any).port;
-  await new Promise<void>((r) => s.close(() => r()));
-  const delays: number[] = [],
-    lines: string[] = [];
-  let calls = 0;
+test("proxy returns after more than six errors: automatic cooldown recovery", async () => {
+  const delays: number[] = [];
+  let probes = 0,
+    polls = 0;
   const runtime = makeRuntime(
-    async () => {
-      calls++;
-      return botInfo;
+    async (method, signal) => {
+      if (method === "getMe") return botInfo;
+      if (method === "getWebhookInfo") return { url: "" };
+      if (method === "getChatMenuButton")
+        return { type: "web_app", web_app: { url: "https://example.com" } };
+      if (method === "getUpdates") {
+        polls++;
+        return blocked(signal);
+      }
+      return true;
     },
     {
-      probe: (signal) => probeProxy(`socks5://127.0.0.1:${port}`, signal, 100),
+      probe: async () => {
+        if (++probes <= 8)
+          throw Object.assign(new Error("proxy down"), {
+            code: "ECONNREFUSED",
+          });
+      },
       wait: async (ms) => {
         delays.push(ms);
       },
-      logger: (_c, m) => lines.push(m),
+      logger: () => {},
     },
   );
-  await runtime.start();
-  assert.equal(calls, 0);
-  assert.equal(runtime.status.bot, "failed");
-  assert.equal(runtime.status.proxy, "unreachable");
-  assert.deepEqual(delays, [1000, 2000, 4000, 8000, 16000]);
-  assert.equal(retryDelay(100), 30000);
-  assert.match(lines.at(-1)!, /HTTP remains available/);
+  const task = runtime.start();
+  await until(() => polls === 1);
+  assert.ok(probes > 6);
+  assert.equal(runtime.status.failures, 0);
+  assert.equal(runtime.status.api, "ready");
+  assert.ok(delays.filter((ms) => ms === 60000).length >= 4);
+  assert.equal(retryDelay(100), 60000);
+  assert.ok(runtime.status.lastSuccessAt);
+  await runtime.stop();
+  await task;
 });
 test("polling 409 stops safely instead of creating a second poller; stop cancels backoff", async () => {
   const r = makeRuntime(
@@ -400,4 +413,93 @@ test("actual index HTTP survives unavailable Telegram proxy and shuts down throu
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+test("ECONNRESET over two outage cycles recovers polling automatically; jitter and cooldown remain bounded", async () => {
+  let polls = 0;
+  const waits: number[] = [];
+  const r = makeRuntime(
+    async (method, signal) => {
+      if (method === "getMe") return botInfo;
+      if (method === "getWebhookInfo") return { url: "" };
+      if (method === "getChatMenuButton")
+        return { type: "web_app", web_app: { url: "https://example.com" } };
+      if (method === "getUpdates") {
+        polls++;
+        if (polls === 8 || polls === 16) return [];
+        if (polls >= 17) return blocked(signal);
+        throw Object.assign(new Error("network reset"), {
+          name: "HttpError",
+          error: { code: "ECONNRESET" },
+        });
+      }
+      return true;
+    },
+    {
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      probe: async () => {},
+      logger: () => {},
+    },
+  );
+  const work = r.start();
+  await until(() => polls >= 17);
+  assert.equal(r.status.failures, 0);
+  assert.equal(r.status.api, "ready");
+  assert.ok(r.status.lastSuccessAt);
+  assert.ok(r.status.lastFailureAt);
+  assert.ok(r.status.lastPollSuccessAt);
+  assert.ok(waits.filter((ms) => ms === 60000).length >= 4);
+  await r.stop();
+  await work;
+  const { recoveryDelay } = await import("../backend/src/telegram-runtime.js");
+  assert.equal(
+    recoveryDelay(1, () => 0),
+    800,
+  );
+  assert.equal(
+    recoveryDelay(1, () => 1),
+    1200,
+  );
+  assert.equal(
+    recoveryDelay(100, () => 1),
+    144000,
+  );
+});
+test("menu mismatch includes wrong path and is repaired after connectivity resumes", async () => {
+  let menus = 0,
+    polls = 0,
+    time = 1000;
+  const r = makeRuntime(
+    async (method, signal) => {
+      if (method === "getMe") return botInfo;
+      if (method === "getWebhookInfo") return { url: "" };
+      if (method === "getChatMenuButton")
+        return {
+          type: "web_app",
+          web_app: {
+            url:
+              ++menus === 1
+                ? "https://example.com/old"
+                : "https://example.com/",
+          },
+        };
+      if (method === "getUpdates") {
+        if (++polls === 1) {
+          assert.equal(r.status.menu, "mismatch");
+          time += 61000;
+          return [];
+        }
+        return blocked(signal);
+      }
+      return true;
+    },
+    { now: () => time, wait: async () => {}, logger: () => {} },
+  );
+  const work = r.start();
+  await until(() => polls >= 2);
+  assert.equal(r.status.menu, "matches");
+  assert.equal(r.status.setup, "ready");
+  await r.stop();
+  await work;
 });

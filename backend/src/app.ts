@@ -1,10 +1,14 @@
+import { pointSchema } from "./point-schema.js";
+import { skiCatalog, skiBundle } from "./ski-data.js";
+import { deviceRouter, initDevices, createPair } from "./devices.js";
 import express from "express";
+import { log, safeError } from "./safe-log.js";
 import helmet from "helmet";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { verifyInitData, type TelegramUser } from "./auth.js";
@@ -22,24 +26,20 @@ export type Config = {
   devAuth: boolean;
   token: string;
   origins: string[];
-  trustProxy: number;
+  trustProxy: number | "loopback";
+  buildId?: string;
   status?: () => unknown;
+  deploymentId?: string;
+  endpoint?: () => unknown;
+  diagnosticsToken?: string;
 };
-const point = z.object({
-  lat: z.number().min(-90).max(90),
-  lon: z.number().min(-180).max(180),
-  t: z.number().positive().max(8640000000000000),
-  alt: z.number().min(-12000).max(20000).nullable().optional(),
-  accuracy: z.number().nonnegative().nullable().optional(),
-  altAccuracy: z.number().nonnegative().nullable().optional(),
-  speed: z.number().nonnegative().nullable().optional(),
-  breakBefore: z.boolean().optional(),
-});
+const point = pointSchema;
 const session = z.object({
   id: z.uuid(),
   resort: z.string().trim().max(100).default(""),
   trip: z.string().trim().max(100).default(""),
   points: z.array(point).min(2).max(MAX_POINTS),
+  skiResortId: z.string().max(100).optional(),
 });
 export const profileSchema = z.object({
   nickname: z.string().trim().max(40),
@@ -54,6 +54,7 @@ export function createApp(db: DB, config: Config) {
     throw new Error("DEV_AUTH запрещён в production");
   if (config.production && !config.token)
     throw new Error("BOT_TOKEN обязателен в production");
+  initDevices(db);
   const app = express();
   app.disable("x-powered-by");
   if (config.trustProxy) app.set("trust proxy", config.trustProxy);
@@ -69,6 +70,7 @@ export function createApp(db: DB, config: Config) {
             "blob:",
             "https://*.tile.openstreetmap.org",
             "https://tile.openstreetmap.org",
+            "https://*.tile.opentopomap.org",
             "https://*.t.me",
             "https://t.me",
             "https://*.telegram.org",
@@ -103,28 +105,53 @@ export function createApp(db: DB, config: Config) {
   );
   app.use(express.json({ limit: "12mb" }));
   app.get("/api/health", (_req, res) => res.json({ ok: true }));
-  app.get("/api/status", (_req, res) => {
+  const componentStatus = () => {
     let database = "ready";
     try {
       db.prepare("SELECT 1").get();
     } catch {
       database = "unavailable";
     }
-    res
-      .set("Cache-Control", "no-store")
-      .json({
-        http: "ready",
-        mode:
-          config.production && !config.devAuth
-            ? "production-private"
-            : "local-development",
-        database,
-        telegram: config.status?.() ?? { bot: "disabled", api: "unknown" },
-      });
+    return {
+      http: "ready",
+      buildId: config.buildId ?? "unbuilt",
+      mode:
+        config.production && !config.devAuth
+          ? "production-private"
+          : "local-development",
+      database,
+      deploymentId: config.deploymentId ?? "unconfigured",
+      telegram: config.status?.() ?? { bot: "disabled", api: "unknown" },
+      publicEndpoint: config.endpoint?.() ?? { state: "unknown" },
+    };
+  };
+  app.get("/api/status", (_req, res) => {
+    const status = componentStatus();
+    const internal = status.telegram as Record<string, unknown>;
+    const telegram = Object.fromEntries(
+      ["bot", "api", "setup", "menu", "transport"]
+        .filter((k) => internal[k] !== undefined)
+        .map((k) => [k, internal[k]]),
+    );
+    res.set("Cache-Control", "no-store").json({ ...status, telegram });
   });
+  app.get("/api/diagnostics", (req, res) => {
+    const actual = Buffer.from(req.get("authorization") ?? ""),
+      expected = Buffer.from("Bearer " + (config.diagnosticsToken ?? ""));
+    if (
+      !config.diagnosticsToken ||
+      actual.length !== expected.length ||
+      !timingSafeEqual(actual, expected)
+    ) {
+      res.status(404).end();
+      return;
+    }
+    res.set("Cache-Control", "no-store").json(componentStatus());
+  });
+  app.use("/api/device", deviceRouter(db));
   app.use("/api", (req, res, next) => {
+    let user: TelegramUser;
     try {
-      let user: TelegramUser;
       const h = req.get("authorization") ?? "";
       if (h.startsWith("tma ") && config.token)
         user = verifyInitData(h.slice(4), config.token);
@@ -132,20 +159,64 @@ export function createApp(db: DB, config: Config) {
         user = { id: 1, first_name: "Райдер", username: "local_rider" };
       else {
         res.status(401).json({
-          error:
-            "Откройте приложение через Telegram. Локально включите DEV_AUTH.",
+          error: config.production
+            ? "Откройте приложение через Telegram."
+            : "Откройте приложение через Telegram. Локально включите DEV_AUTH.",
         });
         return;
       }
-      ensureUser(db, user);
-      res.locals.user = user;
-      next();
     } catch {
       res.status(401).json({
         error:
-          "Авторизация недействительна или истекла. Откройте приложение заново.",
+          "Авторизация недействительна или истекла. Переоткройте приложение через бота; черновик остаётся на устройстве.",
       });
+      return;
     }
+    try {
+      ensureUser(db, user);
+      res.locals.user = user;
+      next();
+    } catch (e) {
+      next(e);
+    }
+  });
+  app.get("/api/ski/catalog", (_req, res) => {
+    try {
+      const { files, ...catalog } = skiCatalog();
+      res.json(catalog);
+    } catch {
+      res
+        .status(503)
+        .json({ error: "Каталог карты недоступен. Проверьте map-data." });
+    }
+  });
+  app.get("/api/ski/resorts/:id", (req, res) => {
+    const bundle = skiBundle(String(req.params.id));
+    if (!bundle) {
+      res.status(404).json({ error: "Нет подготовленных геоданных курорта" });
+      return;
+    }
+    res.json(bundle);
+  });
+  app.post("/api/recorder/pair", (_req, res) =>
+    res
+      .set("Cache-Control", "no-store")
+      .json(createPair(db, res.locals.user.id)),
+  );
+  app.get("/api/recorder/devices", (_req, res) =>
+    res.json(
+      db
+        .prepare(
+          "SELECT id,created_at,revoked FROM recorder_devices WHERE user_id=?",
+        )
+        .all(res.locals.user.id),
+    ),
+  );
+  app.delete("/api/recorder/devices/:id", (req, res) => {
+    db.prepare(
+      "UPDATE recorder_devices SET revoked=1 WHERE id=? AND user_id=?",
+    ).run(String(req.params.id), res.locals.user.id);
+    res.status(204).end();
   });
   app.get("/api/me", (_req, res) => {
     const u = res.locals.user;
@@ -265,7 +336,7 @@ export function createApp(db: DB, config: Config) {
         err instanceof multer.MulterError ||
         err.type === "entity.too.large";
       const status = bad ? 400 : err.status === 400 ? 400 : 500;
-      if (status === 500) console.error("API error:", err.message);
+      if (status === 500) log("http-api", safeError(err));
       res.status(status).json({
         error:
           err instanceof z.ZodError

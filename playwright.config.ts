@@ -22,6 +22,7 @@ export default defineConfig({
       PORT: "3099",
       HOST: "127.0.0.1",
       DATABASE_PATH: ":memory:",
+      SKI_DATA_PATH: process.env.SLOPEMATE_TEST_MAPS || "map-data",
       BOT_TOKEN: "",
     },
   },
